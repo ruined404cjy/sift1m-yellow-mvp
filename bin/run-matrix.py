@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""执行 SIFT1M 的 K×DOP×扫描模式矩阵并汇总 JSON。"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def csv_ints(value: str, label: str) -> list[int]:
+    """解析正整数逗号列表并保持输入顺序。"""
+    try:
+        values = [int(item) for item in value.split(",")]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{label} 必须是整数逗号列表") from exc
+    if not values or any(item < 1 for item in values):
+        raise argparse.ArgumentTypeError(f"{label} 必须全部大于 0")
+    return values
+
+
+def main() -> None:
+    root_dir = Path(__file__).resolve().parent.parent
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--k", default="10,100,1000,10000")
+    parser.add_argument("--dop", default="1,2,4,8")
+    parser.add_argument("--modes", default="index,fullscan")
+    parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--nq", type=int, default=1)
+    parser.add_argument("--warmup", type=int, default=1)
+    parser.add_argument("--nprobe", type=int)
+    parser.add_argument("--allow-serial-fallback", action="store_true")
+    parser.add_argument("--output-dir", type=Path, default=root_dir / "state/matrix")
+    args = parser.parse_args()
+
+    ks = csv_ints(args.k, "k")
+    dops = csv_ints(args.dop, "dop")
+    modes = args.modes.split(",")
+    if any(mode not in ("index", "fullscan") for mode in modes):
+        raise ValueError("modes 仅支持 index,fullscan")
+    if args.rounds < 1 or args.nq < 1 or args.warmup < 0:
+        raise ValueError("rounds/nq 必须大于 0，warmup 不能小于 0")
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    results = []
+    for mode in modes:
+        for k in ks:
+            for dop in dops:
+                for round_no in range(1, args.rounds + 1):
+                    label = f"{mode}-k{k}-dop{dop}-r{round_no}"
+                    output = args.output_dir / f"{label}.json"
+                    command = [
+                        sys.executable,
+                        str(root_dir / "bin/benchmark.py"),
+                        "--mode", mode,
+                        "--nq", str(args.nq),
+                        "--k", str(k),
+                        "--warmup", str(args.warmup),
+                        "--query-dop", str(dop),
+                        "--output", str(output),
+                    ]
+                    if k > 100:
+                        command.append("--skip-recall")
+                    if dop > 1 and not args.allow_serial_fallback:
+                        command.append("--require-parallel-plan")
+                    if args.nprobe is not None:
+                        command.extend(("--nprobe", str(args.nprobe)))
+                    print(f"运行 {label}", flush=True)
+                    run = subprocess.run(command, check=False)
+                    if run.returncode != 0:
+                        raise RuntimeError(f"矩阵场景失败: {label}")
+                    item = json.loads(output.read_text(encoding="utf-8"))
+                    item["round"] = round_no
+                    item["result_file"] = str(output)
+                    results.append(item)
+
+    summary = {
+        "format_version": 1,
+        "k_values": ks,
+        "dop_values": dops,
+        "modes": modes,
+        "rounds": args.rounds,
+        "query_count_per_round": args.nq,
+        "results": results,
+    }
+    summary_path = args.output_dir / "summary.json"
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"矩阵结果已保存: {summary_path}")
+
+
+if __name__ == "__main__":
+    main()

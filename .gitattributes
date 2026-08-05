@@ -1,0 +1,2 @@
+downloads/*.fvecs filter=lfs diff=lfs merge=lfs -text
+downloads/*.ivecs filter=lfs diff=lfs merge=lfs -text

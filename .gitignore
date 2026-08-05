@@ -1,0 +1,10 @@
+/downloads/*.fvecs
+/downloads/*.ivecs
+/state/*
+!/state/.gitkeep
+/mvp.env
+/.venv/
+/wheelhouse/*.whl
+/wheelhouse/SHA256SUMS
+*.tar.gz
+__pycache__/
