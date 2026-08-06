@@ -1,6 +1,6 @@
 # 黄区 SIFT1M 多供数离线测试套件
 
-版本：1.4.0
+版本：1.4.1
 
 ## 1. 目标与边界
 
@@ -35,9 +35,9 @@ PyIceberg 0.11.1 和当前 Rust Iceberg SDK 的 `NestedField` 均没有 `vector_
 `iceberg_catalog.create_table` 的 schema JSON 中提供字段级 `vector_dim=128`，producer
 metadata 的 `vector_dim.embedding=128` 保留为数据契约审计属性。
 
-套件不主动创建 `iceberg_delta` 扩展，但支持已经创建并加载 Delta hook 的数据库。
-`create_table` 使用同一份字段级向量 schema 创建基础外表和 Delta 伴生表，避免两者在
-planner UNION 时出现 `text` 与向量类型冲突。
+套件不创建、加载或检查 `iceberg_delta` 扩展及其伴生表，也不依赖 Delta。目标 backend
+已激活 Delta hook 时，Catalog 在 `create_table` 过程中使用同一份字段级向量 schema；hook
+未激活时只创建基础表。两种环境均执行相同的 fixture 接入、数据扫描和向量查询流程。
 
 ## 2. 三条供数路径
 
@@ -373,8 +373,9 @@ MVP_OFFLINE_PROVIDER=rust bash bin/make-offline-bundle.sh
 ### 基础表或 Delta 伴生表为 `text`
 
 确认安装的 Catalog 支持 `create_table` schema 字段级 `vector_dim`，并检查
-`state/register-table.log`。接入脚本不会从 producer metadata 推导 SQL 类型；若 Delta hook
-已加载，基础表与 `<table>_delta` 的 `embedding` 必须显示为相同的 128 维向量类型。
+`state/register-table.log`。接入脚本不会从 producer metadata 推导 SQL 类型，也不操作或
+检查 Delta。Catalog 主动建表避免基础表与 hook 生成对象分别取自不同 schema；后续数据
+扫描和向量查询负责验证实际执行链路。
 
 ### DOP 不生效
 

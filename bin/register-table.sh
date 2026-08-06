@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 通过 Catalog 主动建表并接入 producer fixture，保留字段级向量类型和 Delta 伴生表。
+# 通过 Catalog 主动建表并接入 producer fixture，保留 Catalog 创建的字段级向量类型。
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -170,22 +170,6 @@ catalog_head="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -F '|' -c \
 if [[ "$catalog_head" != "1|1|1" ]]; then
   echo "ERROR: Catalog 表头校验失败，实际为 $catalog_head，期望 1|1|1" >&2
   exit 1
-fi
-
-delta_table="${table}_delta"
-delta_rel="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
-  "SELECT COALESCE(to_regclass('$namespace.$delta_table')::text, '');" | tr -d '[:space:]')"
-if [[ -n "$delta_rel" ]]; then
-  delta_type="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
-    "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid='$namespace.$delta_table'::regclass AND attname='embedding' AND NOT attisdropped;" \
-    | tr -d '[:space:]')"
-  if [[ "$delta_type" != "$actual_type" ]]; then
-    echo "ERROR: Delta 伴生表 embedding 类型为 ${delta_type:-<empty>}，基础表为 $actual_type" >&2
-    exit 1
-  fi
-  echo "Delta 伴生表类型校验通过: $namespace.$delta_table embedding $delta_type"
-else
-  echo "Delta 伴生表未创建；当前数据库会话未启用 Delta create hook"
 fi
 
 printf '%s.%s\n' "$namespace" "$table" > "$root_dir/state/table.txt"
