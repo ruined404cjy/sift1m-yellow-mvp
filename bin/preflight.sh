@@ -128,7 +128,7 @@ sed -n '1p' <<< "$gsql_version"
 echo "数据库连接: OK"
 echo "Catalog C 函数实际绑定:"
 "$gsql_bin" -X -d "${MVP_DB:-postgres}" -p "${MVP_PORT:-37000}" \
-  -c "SELECT proname, probin FROM pg_proc WHERE proname='iceberg_register_table';"
+  -c "SELECT p.proname, p.probin FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='iceberg_catalog' AND p.proname='create_table';"
 
 gausshome="${MVP_GAUSSHOME:-${GAUSSHOME:-}}"
 if [[ -n "$gausshome" && -d "$gausshome" ]]; then

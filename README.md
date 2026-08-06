@@ -1,6 +1,6 @@
 # 黄区 SIFT1M 多供数离线测试套件
 
-版本：1.3.0
+版本：1.4.0
 
 ## 1. 目标与边界
 
@@ -9,8 +9,8 @@
 ```text
 SIFT1M
   → Spark、PyIceberg 或 Rust fixture 生成完整 Iceberg v2 snapshot
-  → iceberg_catalog.register_table
-  → 重建 embedding floatvector(128) 外表并更新 relid
+  → iceberg_catalog.create_table 创建字段级 `vector_dim=128` 的 Catalog 表
+  → 将 Catalog `metadata_location/current_snapshot_id` 切换到 fixture
   → IVF-PQ 索引
   → 串行冒烟或 K×DOP×扫描模式性能矩阵
   → 官方 GT Recall、QPS、p50/p95/p99
@@ -21,8 +21,8 @@ SIFT1M
 - Iceberg schema：`id long`、`embedding list<float>`；
 - ID：`1..1,000,000`；
 - 表属性：字符串 `vector_dim.embedding=128`，用于审计；
-- 数据库入口：最新 metadata 文件的绝对 `file:///` URI；
-- 注册结果：`manual-vector` 模式重建 `embedding floatvector(128)` 外表并更新 `relid`。
+- fixture 定位：最新 metadata 文件的绝对 `file:///` URI；
+- 数据库入口：Catalog 主动建表后切换到 fixture metadata，保留原外表和 `relid`。
 
 Catalog 的原生自动映射契约位于 Iceberg schema 字段：
 
@@ -31,14 +31,13 @@ Catalog 的原生自动映射契约位于 Iceberg schema 字段：
 ```
 
 PyIceberg 0.11.1 和当前 Rust Iceberg SDK 的 `NestedField` 均没有 `vector_dim` 字段，
-序列化时无法保留该扩展。Spark Iceberg schema 同样不生成该字段。表级
-`vector_dim.embedding=128` 不会被当前 Catalog 当作列级属性读取。套件保留
-`MVP_REGISTER_MODE=auto`，只用于验证已经包含字段级 `vector_dim` 的 metadata。
+序列化时无法保留该扩展。Spark Iceberg schema 同样不生成该字段。套件在
+`iceberg_catalog.create_table` 的 schema JSON 中提供字段级 `vector_dim=128`，producer
+metadata 的 `vector_dim.embedding=128` 保留为数据契约审计属性。
 
-套件不创建 `iceberg_delta` 扩展。Delta 会把 Arrow C++ 和扩展运行时带入数据库进程，
-适合验证 Delta hook、flush 和 MOR。Delta 通过
-`iceberg_catalog.create_table` 的 schema JSON 接收字段级 `vector_dim`，是当前栈中
-“Catalog 原生建表 + 数据写入”的完整路径。本套件聚焦外部 snapshot 注册，不加载 Delta。
+套件不主动创建 `iceberg_delta` 扩展，但支持已经创建并加载 Delta hook 的数据库。
+`create_table` 使用同一份字段级向量 schema 创建基础外表和 Delta 伴生表，避免两者在
+planner UNION 时出现 `text` 与向量类型冲突。
 
 ## 2. 三条供数路径
 
@@ -49,8 +48,8 @@ PyIceberg 0.11.1 和当前 Rust Iceberg SDK 的 `NestedField` 均没有 `vector_
 | Catalog | HadoopCatalog | 临时 SQLite Catalog | MemoryCatalog + LocalFs |
 | 内存策略 | Spark 分区写 | 每批默认 131072 行 | 每批默认 131072 行 |
 | 分区 | `bucket(id, N)` | `bucket(id, N)` | 仅非分区 |
-| 字段级 `vector_dim` | 不支持 | 不支持 | 不支持 |
-| 数据库入口 | `register_table` + 重建外表 | `register_table` + 重建外表 | `register_table` + 重建外表 |
+| producer metadata 字段级 `vector_dim` | 不支持 | 不支持 | 不支持 |
+| 数据库入口 | `create_table` + metadata 切换 | `create_table` + metadata 切换 | `create_table` + metadata 切换 |
 
 PyIceberg 每次 `append` 会为涉及的分区生成数据文件。分区表的文件数通常多于 Spark。
 各 producer 的结果用于验证互操作；性能数值只有在 Parquet 文件数、大小、压缩、
@@ -222,7 +221,8 @@ PyIceberg 供数器执行以下门禁：
 7. 校验最终 metadata 的 schema、partition spec、snapshot 和属性；
 8. 输出 Parquet 文件数、总字节数及最新 metadata URI。
 
-供数器不修改已发布 metadata，也不操作数据库 Catalog。外表重建由注册入口执行。
+供数器不修改已发布 metadata，也不操作数据库 Catalog。统一接入脚本负责 Catalog 建表和
+metadata 切换。
 
 ## 8. Rust fixture 供数
 
@@ -238,7 +238,7 @@ example。供数器流式验证 516 字节 fvecs 记录，按批次生成 Parque
 v2 snapshot，并输出最新 metadata URI。Rust SDK schema 仍为 `long + list<float>`；
 `vector_dim.embedding=128` 是表级审计属性。
 
-## 9. 统一注册门禁
+## 9. 统一 fixture 接入门禁
 
 任一 producer 供数完成后执行：
 
@@ -246,28 +246,25 @@ v2 snapshot，并输出最新 metadata URI。Rust SDK schema 仍为 `long + list
 bash bin/register-table.sh
 ```
 
-默认 `MVP_REGISTER_MODE=manual-vector`，流程与蓝区有数据向量 fixture 一致：
+脚本名为 `register-table.sh` 以保持离线包目录和既有调用方式稳定，实际流程为：
 
-1. 调用 `register_table` 加载 snapshot；
-2. 删除自动生成的外表；
-3. 按 `id bigint, embedding $MVP_VECTOR_TYPE(128)` 重建外表；
-4. 更新 `iceberg_catalog.tables_internal.relid`；
-5. 校验行数、ID 范围、SQL 类型和 `relid`。
-
-`MVP_REGISTER_MODE=auto` 只接受 metadata 中
-`schema.fields[embedding].vector_dim=128`，并要求 Catalog 自动生成向量列。表级属性不能
-通过该门禁。
+1. 校验 fixture snapshot、`id long`、`embedding list<float>` 和表级审计属性；
+2. 在独立 bootstrap 位置调用 `create_table`，schema 字段显式携带 `vector_dim=128`；
+3. 保留 Catalog 创建的外表、`relid` 及可选 Delta 伴生表；
+4. 将 `tables_internal.metadata_location` 和 `current_snapshot_id` 切换到 fixture；
+5. 校验数据范围、基础列类型、Catalog 表头，以及已存在的 Delta 伴生列类型。
 
 共同通过条件：
 
-- `manual-vector` metadata 顶层审计属性是字符串 `vector_dim.embedding=128`；
-- `auto` metadata 的 `embedding` 字段含整数 `vector_dim=128`；
-- 最终外表是 `id bigint, embedding floatvector(128)`；
+- fixture metadata 顶层审计属性是字符串 `vector_dim.embedding=128`；
+- Catalog 建表 schema 的 `embedding` 字段含整数 `vector_dim=128`；
+- 最终外表是 `id bigint, embedding vector(128)` 或 `floatvector(128)`；
 - `tables_internal.relid` 指向最终外表；
 - `count=1000000, min(id)=1, max(id)=1000000`。
 
-报告必须记录注册模式。`manual-vector` 结果验证数据平面、索引和查询，不用于声明 Catalog
-已完成字段级自动映射。
+producer metadata 可以不含字段级 `vector_dim`；向量 SQL 类型来自 Catalog 主动建表 schema。
+`MVP_CATALOG_BOOTSTRAP_DIR` 可覆盖空表的临时位置，默认使用
+`MVP_WAREHOUSE_DIR/.catalog-bootstrap`。
 
 ## 10. 构建索引
 
@@ -338,7 +335,7 @@ python3 bin/run-matrix.py --k 10,100 --dop 1,8 --rounds 3 --nq 1
 | 表 | 1,000,000 行、128 维、一基 ID |
 | metadata | 最终 snapshot 的具体绝对 URI |
 | 维度 | 数据均为 128 维；记录字段级属性和表级审计属性 |
-| SQL 类型 | `auto` 原生映射或 `manual-vector` 重建为 `floatvector(128)` |
+| SQL 类型 | Catalog `create_table` 原生创建 `vector(128)` 或 `floatvector(128)` |
 | 索引 | `index_status=active` |
 | 串行计划 | Vector Search 和实际 bridge scan mode 正确 |
 | 并行计划 | DOP>1 出现对应 LOCAL GATHER |
@@ -373,10 +370,11 @@ MVP_OFFLINE_PROVIDER=rust bash bin/make-offline-bundle.sh
 
 ## 14. 常见故障
 
-### 注册后为 `text`
+### 基础表或 Delta 伴生表为 `text`
 
-`auto` 模式检查最终 metadata 的 `schemas[].fields[].vector_dim`。PyIceberg、Spark 和
-当前 Rust SDK 生成的 metadata 不含该字段，应使用 `manual-vector` 模式并在报告中记录。
+确认安装的 Catalog 支持 `create_table` schema 字段级 `vector_dim`，并检查
+`state/register-table.log`。接入脚本不会从 producer metadata 推导 SQL 类型；若 Delta hook
+已加载，基础表与 `<table>_delta` 的 `embedding` 必须显示为相同的 128 维向量类型。
 
 ### DOP 不生效
 
