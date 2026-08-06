@@ -23,6 +23,11 @@ class CatalogAttachContractTest(unittest.TestCase):
         self.assertNotIn("CREATE FOREIGN TABLE", SCRIPT)
         self.assertNotIn("SET relid=", SCRIPT)
 
+    def test_does_not_create_or_load_delta(self):
+        self.assertNotIn("iceberg_delta", SCRIPT)
+        self.assertNotIn("_delta", SCRIPT)
+        self.assertNotIn("to_regclass(", SCRIPT)
+
 
 if __name__ == "__main__":
     unittest.main()
