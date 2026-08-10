@@ -269,9 +269,13 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", required=True, choices=("index", "fullscan"))
-    parser.add_argument("--nq", type=int, default=100)
-    parser.add_argument("--k", type=int, default=10)
-    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument(
+        "--nq", type=int, default=int(config.get("MVP_TEST_NQ", "100"))
+    )
+    parser.add_argument("--k", type=int, default=int(config.get("MVP_TEST_K", "10")))
+    parser.add_argument(
+        "--warmup", type=int, default=int(config.get("MVP_TEST_WARMUP", "5"))
+    )
     parser.add_argument("--nprobe", type=int, default=int(config.get("MVP_NPROBE", "10")))
     parser.add_argument("--query-dop", type=int, default=1)
     parser.add_argument("--require-parallel-plan", action="store_true")

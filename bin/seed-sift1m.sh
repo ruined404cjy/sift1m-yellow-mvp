@@ -33,7 +33,7 @@ env -u LD_LIBRARY_PATH \
   --id-base "${MVP_ID_BASE:-1}" \
   --data-files "${MVP_DATA_FILES:-8}" \
   --compression "${MVP_COMPRESSION:-uncompressed}" \
-  --partition-buckets "${MVP_PARTITION_BUCKETS:-0}" \
+  --partition-buckets "${MVP_PARTITION_BUCKETS:-32}" \
   2>&1 | tee "$seed_log"
 
 metadata="$(sed -n 's/^MVP_METADATA_LOCATION=//p' "$seed_log" | tail -1)"

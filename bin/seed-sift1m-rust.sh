@@ -23,8 +23,9 @@ for value in "$MVP_NAMESPACE" "$MVP_TABLE"; do
     exit 1
   fi
 done
-if [[ "${MVP_PARTITION_BUCKETS:-0}" != "0" ]]; then
-  echo "ERROR: Rust fixture 当前只支持非分区串行表；请设置 MVP_PARTITION_BUCKETS=0" >&2
+partition_buckets="${MVP_PARTITION_BUCKETS:-32}"
+if [[ ! "$partition_buckets" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: MVP_PARTITION_BUCKETS 必须是非负整数: $partition_buckets" >&2
   exit 1
 fi
 manifest="$MVP_BRIDGE_SOURCE/Cargo.toml"
@@ -62,6 +63,7 @@ env -u LD_LIBRARY_PATH "$cargo_bin" run \
   "$MVP_TABLE" \
   "${MVP_RUST_BATCH_ROWS:-131072}" \
   "${MVP_COMPRESSION:-uncompressed}" \
+  "$partition_buckets" \
   2>&1 | tee "$seed_log"
 
 metadata="$(sed -n 's/^MVP_METADATA_LOCATION=//p' "$seed_log" | tail -1)"

@@ -93,7 +93,7 @@ def main() -> None:
     parser.add_argument("--data-files", type=int, default=8)
     parser.add_argument("--compression", default="uncompressed",
                         choices=("uncompressed", "zstd", "snappy", "lz4"))
-    parser.add_argument("--partition-buckets", type=int, default=0)
+    parser.add_argument("--partition-buckets", type=int, default=32)
     args = parser.parse_args()
 
     validate_identifier(args.namespace, "namespace")

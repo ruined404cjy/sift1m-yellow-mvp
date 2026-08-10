@@ -34,6 +34,26 @@ class BinaryReaderTest(unittest.TestCase):
             self.assertEqual(loaded[127], 127.0)
             self.assertEqual(BENCHMARK.euclidean_distance(loaded, loaded), 0.0)
 
+    def test_multiple_query_and_groundtruth_records_remain_aligned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            query = root / "query.fvecs"
+            groundtruth = root / "groundtruth.ivecs"
+            query.write_bytes(
+                struct.pack("<i128f", 128, *range(128))
+                + struct.pack("<i128f", 128, *range(1000, 1128))
+            )
+            groundtruth.write_bytes(
+                struct.pack("<i100i", 100, *range(100))
+                + struct.pack("<i100i", 100, *range(1000, 1100))
+            )
+
+            vectors = BENCHMARK.read_fvecs(query, 2)
+            neighbors = BENCHMARK.read_ivecs(groundtruth, 2, 10, 1)
+            self.assertEqual(vectors[1][0], 1000.0)
+            self.assertEqual(vectors[1][-1], 1127.0)
+            self.assertEqual(neighbors[1], list(range(1001, 1011)))
+
     def test_percentile(self):
         self.assertEqual(BENCHMARK.percentile([1.0, 2.0, 3.0], 50), 2.0)
         self.assertAlmostEqual(BENCHMARK.percentile([1.0, 3.0], 95), 2.9)

@@ -21,10 +21,15 @@ mkdir -p "$root_dir/state"
 exec > >(tee "$root_dir/state/preflight.log") 2>&1
 
 : "${MVP_WAREHOUSE_DIR:?MVP_WAREHOUSE_DIR 未配置}"
+bash "$root_dir/bin/verify-sift1m.sh"
 
-if [[ "$(uname -m)" != "aarch64" ]]; then
+if [[ "$(uname -m)" != "aarch64" && "${MVP_ALLOW_NON_AARCH64:-0}" != "1" ]]; then
   echo "ERROR: 当前架构为 $(uname -m)，本 MVP 的目标架构是 aarch64" >&2
+  echo "ERROR: 蓝区验证可显式设置 MVP_ALLOW_NON_AARCH64=1" >&2
   exit 1
+fi
+if [[ "$(uname -m)" != "aarch64" ]]; then
+  echo "WARN: 已启用非 aarch64 蓝区验证开关，结果不代表黄区 ARM 性能" >&2
 fi
 echo "架构: $(uname -m)"
 

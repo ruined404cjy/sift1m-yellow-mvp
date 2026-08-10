@@ -33,7 +33,7 @@ env -u LD_LIBRARY_PATH "$python_bin" "$root_dir/src/seed_sift1m_pyiceberg.py" \
   --table "$MVP_TABLE" \
   --batch-rows "${MVP_PYICEBERG_BATCH_ROWS:-131072}" \
   --compression "${MVP_COMPRESSION:-uncompressed}" \
-  --partition-buckets "${MVP_PARTITION_BUCKETS:-0}" \
+  --partition-buckets "${MVP_PARTITION_BUCKETS:-32}" \
   2>&1 | tee "$seed_log"
 
 metadata="$(sed -n 's/^MVP_METADATA_LOCATION=//p' "$seed_log" | tail -1)"

@@ -151,7 +151,7 @@ def main() -> None:
     parser.add_argument("--batch-rows", type=int, default=131_072)
     parser.add_argument("--compression", default="uncompressed",
                         choices=("uncompressed", "zstd", "snappy", "gzip"))
-    parser.add_argument("--partition-buckets", type=int, default=0)
+    parser.add_argument("--partition-buckets", type=int, default=32)
     args = parser.parse_args()
 
     validate_identifier(args.namespace, "namespace")

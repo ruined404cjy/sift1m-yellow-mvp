@@ -21,15 +21,43 @@ def csv_ints(value: str, label: str) -> list[int]:
     return values
 
 
+def read_env_file(path: Path) -> dict[str, str]:
+    """读取简单的 export KEY=value 配置，不执行 shell。"""
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
 def main() -> None:
     root_dir = Path(__file__).resolve().parent.parent
+    config = read_env_file(root_dir / "mvp.env")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--k", default="10,100,1000,10000")
-    parser.add_argument("--dop", default="1,2,4,8")
-    parser.add_argument("--modes", default="index,fullscan")
-    parser.add_argument("--rounds", type=int, default=3)
-    parser.add_argument("--nq", type=int, default=1)
-    parser.add_argument("--warmup", type=int, default=1)
+    parser.add_argument(
+        "--k", default=config.get("MVP_MATRIX_K", "10,100,1000,10000")
+    )
+    parser.add_argument("--dop", default=config.get("MVP_MATRIX_DOP", "1,2,4,8"))
+    parser.add_argument(
+        "--modes", default=config.get("MVP_MATRIX_MODES", "index,fullscan")
+    )
+    parser.add_argument(
+        "--rounds", type=int, default=int(config.get("MVP_MATRIX_ROUNDS", "1"))
+    )
+    parser.add_argument(
+        "--nq", type=int, default=int(config.get("MVP_MATRIX_NQ", "100"))
+    )
+    parser.add_argument(
+        "--warmup", type=int, default=int(config.get("MVP_MATRIX_WARMUP", "5"))
+    )
     parser.add_argument("--nprobe", type=int)
     parser.add_argument("--allow-serial-fallback", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=root_dir / "state/matrix")

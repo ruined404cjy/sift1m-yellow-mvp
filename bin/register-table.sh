@@ -16,6 +16,7 @@ namespace="${MVP_NAMESPACE:?MVP_NAMESPACE 未配置}"
 table="${MVP_TABLE:?MVP_TABLE 未配置}"
 vector_type="${MVP_VECTOR_TYPE:-floatvector}"
 warehouse_dir="${MVP_WAREHOUSE_DIR:?MVP_WAREHOUSE_DIR 未配置}"
+partition_buckets="${MVP_PARTITION_BUCKETS:-32}"
 metadata="$(head -1 "$metadata_file")"
 gsql_bin="${MVP_GSQL_BIN:-gsql}"
 db="${MVP_DB:-postgres}"
@@ -38,17 +39,22 @@ if [[ "$bootstrap_dir" != /* || "$bootstrap_uri" == *"'"* ]]; then
   echo "ERROR: Catalog bootstrap 目录必须是无单引号的绝对路径: $bootstrap_dir" >&2
   exit 1
 fi
+if [[ ! "$partition_buckets" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: MVP_PARTITION_BUCKETS 必须是非负整数: $partition_buckets" >&2
+  exit 1
+fi
 metadata_path="${metadata#file://}"
 if [[ ! -r "$metadata_path" ]]; then
   echo "ERROR: 当前用户不能读取 metadata: $metadata_path" >&2
   exit 1
 fi
 
-fixture_contract="$(python3 - "$metadata_path" <<'PY'
+fixture_contract="$(python3 - "$metadata_path" "$partition_buckets" <<'PY'
 import json
 import sys
 
 metadata_path = sys.argv[1]
+partition_buckets = int(sys.argv[2])
 with open(metadata_path, "r", encoding="utf-8") as handle:
     metadata = json.load(handle)
 
@@ -101,11 +107,52 @@ if field_vector_dim is not None and field_vector_dim not in (128, "128"):
         f"实际为 {field_vector_dim!r}"
     )
 field_dim_display = "<absent>" if field_vector_dim is None else str(field_vector_dim)
-print(f"{snapshot_id}|{field_dim_display}|{audit_dim}")
+
+default_spec_id = metadata.get("default-spec-id", 0)
+specs = metadata.get("partition-specs")
+if isinstance(specs, list):
+    current_spec = next(
+        (spec for spec in specs if spec.get("spec-id") == default_spec_id),
+        None,
+    )
+    spec_fields = current_spec.get("fields", []) if current_spec else []
+else:
+    spec_fields = metadata.get("partition-spec", [])
+if partition_buckets == 0:
+    if spec_fields:
+        raise SystemExit("ERROR: MVP_PARTITION_BUCKETS=0，但 fixture partition spec 非空")
+else:
+    expected_transform = f"bucket[{partition_buckets}]"
+    if len(spec_fields) != 1 or not (
+        spec_fields[0].get("source-id") == 1
+        and spec_fields[0].get("name") == "id_bucket"
+        and spec_fields[0].get("transform") == expected_transform
+    ):
+        raise SystemExit(
+            f"ERROR: fixture 要求 bucket(id, {partition_buckets}) partition spec，"
+            f"实际为 {spec_fields!r}"
+        )
+
+print(f"{snapshot_id}|{field_dim_display}|{audit_dim}|{partition_buckets}")
 PY
 )"
-IFS='|' read -r snapshot_id field_vector_dim audit_vector_dim <<< "$fixture_contract"
-echo "Fixture metadata: snapshot=$snapshot_id, field vector_dim=$field_vector_dim, table property vector_dim.embedding=$audit_vector_dim"
+IFS='|' read -r snapshot_id field_vector_dim audit_vector_dim actual_partition_buckets <<< "$fixture_contract"
+echo "Fixture metadata: snapshot=$snapshot_id, field vector_dim=$field_vector_dim, table property vector_dim.embedding=$audit_vector_dim, partition buckets=$actual_partition_buckets"
+
+catalog_count="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
+  "SELECT count(*) FROM pg_extension WHERE extname='iceberg_catalog';" \
+  | tr -d '[:space:]')"
+if [[ "$catalog_count" == "0" ]]; then
+  namespace_count=0
+else
+  namespace_count="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
+    "SELECT count(*) FROM iceberg_catalog.namespaces WHERE catalog_name=current_database() AND namespace='$namespace';" \
+    | tr -d '[:space:]')"
+fi
+if [[ "$namespace_count" != "0" && "$namespace_count" != "1" ]]; then
+  echo "ERROR: Catalog namespace 状态异常: $namespace_count" >&2
+  exit 1
+fi
 
 sql_file="$(mktemp /tmp/sift1m-attach.XXXXXX.sql)"
 trap 'rm -f "$sql_file"' EXIT
@@ -114,7 +161,11 @@ cat > "$sql_file" <<SQL
 CREATE EXTENSION IF NOT EXISTS iceberg_catalog;
 CREATE EXTENSION IF NOT EXISTS iceberg_fdw;
 
-SELECT iceberg_catalog.create_namespace('$namespace', '{}'::jsonb);
+SQL
+if [[ "$namespace_count" == "0" ]]; then
+  printf "SELECT iceberg_catalog.create_namespace('%s', '{}'::jsonb);\n" "$namespace" >> "$sql_file"
+fi
+cat >> "$sql_file" <<SQL
 SELECT jsonb_typeof(iceberg_catalog.create_table(
   '$namespace',
   '$table',
