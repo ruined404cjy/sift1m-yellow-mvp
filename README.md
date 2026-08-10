@@ -30,14 +30,13 @@ Catalog 的原生自动映射契约位于 Iceberg schema 字段：
 {"id": 2, "name": "embedding", "type": {"type": "list", "element": "float"}, "vector_dim": 128}
 ```
 
-PyIceberg 0.11.1 和当前 Rust Iceberg SDK 的 `NestedField` 均没有 `vector_dim` 字段，
-序列化时无法保留该扩展。Spark Iceberg schema 同样不生成该字段。套件在
-`iceberg_catalog.create_table` 的 schema JSON 中提供字段级 `vector_dim=128`，producer
-metadata 的 `vector_dim.embedding=128` 保留为数据契约审计属性。
+PyIceberg 0.11.1 和当前 Rust Iceberg SDK 的 `NestedField` 均没有 `vector_dim` 字段，序列化时无法保留该扩展。
+Spark Iceberg schema 同样不生成该字段。
+套件在 `iceberg_catalog.create_table` 的 schema JSON 中提供字段级 `vector_dim=128`，producer metadata 的 `vector_dim.embedding=128` 保留为数据契约审计属性。
 
-套件不创建、加载或检查 `iceberg_delta` 扩展及其伴生表，也不依赖 Delta。目标 backend
-已激活 Delta hook 时，Catalog 在 `create_table` 过程中使用同一份字段级向量 schema；hook
-未激活时只创建基础表。两种环境均执行相同的 fixture 接入、数据扫描和向量查询流程。
+套件不创建、加载或检查 `iceberg_delta` 扩展及其伴生表，也不依赖 Delta。
+目标 backend 已激活 Delta hook 时，Catalog 在 `create_table` 过程中使用同一份字段级向量 schema；hook 未激活时只创建基础表。
+两种环境均执行相同的 fixture 接入、数据扫描和向量查询流程。
 
 ## 2. 三条供数路径
 
@@ -53,8 +52,7 @@ metadata 的 `vector_dim.embedding=128` 保留为数据契约审计属性。
 
 PyIceberg 每次 `append`、Rust fixture 每个输入批次都会为涉及的分区生成数据文件。
 两条路径的分区表文件数通常多于 Spark。
-各 producer 的结果用于验证互操作；性能数值只有在 Parquet 文件数、大小、压缩、
-partition spec、snapshot 数、索引参数和硬件一致时才能直接比较。
+各 producer 的结果用于验证互操作；性能数值只有在 Parquet 文件数、大小、压缩、partition spec、snapshot 数、索引参数和硬件一致时才能直接比较。
 
 ## 3. 文件结构
 
@@ -104,9 +102,9 @@ sift1m-yellow-mvp/
 
 ### 4.1 SIFT1M
 
-GitHub 源码仓库不保存 SIFT1M 数据对象。`downloads/` 保留固定目录及 Git LFS 规则；
-黄区将已有数据复制到该目录后，再提交到 CodeHub。四个文件仍须通过本节大小和 SHA-256
-门禁。
+GitHub 源码仓库不保存 SIFT1M 数据对象。
+`downloads/` 保留固定目录及 Git LFS 规则；黄区将已有数据复制到该目录后，再提交到 CodeHub。
+四个文件仍须通过本节大小和 SHA-256 门禁。
 
 在联网机器执行：
 
@@ -128,8 +126,8 @@ bash bin/download-sift1m.sh
 | `sift_groundtruth.ivecs` | 4040000 |
 | `sift_learn.fvecs` | 51600000 |
 
-执行 `bash bin/verify-sift1m.sh` 校验大小和 SHA-256。Git LFS 指针、截断文件和错误内容
-会立即失败。
+执行 `bash bin/verify-sift1m.sh` 校验大小和 SHA-256。
+Git LFS 指针、截断文件和错误内容会立即失败。
 
 ### 4.2 PyIceberg wheelhouse
 
@@ -140,21 +138,21 @@ MVP_WHEELHOUSE_PYTHON=/usr/bin/python3 \
   bash bin/download-pyiceberg-wheelhouse.sh
 ```
 
-脚本只接受 binary wheel，并生成 `wheelhouse/SHA256SUMS`。锁定环境为 PyIceberg 0.11.1、
-PyArrow 24.0.0 和 SQLAlchemy 2.0.46。不要在 x86_64 主机下载后传给 aarch64 黄区。
+脚本只接受 binary wheel，并生成 `wheelhouse/SHA256SUMS`。
+锁定环境为 PyIceberg 0.11.1、PyArrow 24.0.0 和 SQLAlchemy 2.0.46。
+不要在 x86_64 主机下载后传给 aarch64 黄区。
 
 ### 4.3 Spark 制品
 
-Spark 路径需要与目标配置相符的 JDK、Spark 和 Iceberg Spark runtime。当前示例为 JDK
-17、Spark 3.5.9、Scala 2.12、Iceberg runtime 1.11.0。套件通过绝对路径引用这些制品，
-不把 Spark 发行包复制进测试包。
+Spark 路径需要与目标配置相符的 JDK、Spark 和 Iceberg Spark runtime。
+当前示例为 JDK 17、Spark 3.5.9、Scala 2.12、Iceberg runtime 1.11.0。
+套件通过绝对路径引用这些制品，不把 Spark 发行包复制进测试包。
 
 ### 4.4 Rust fixture 制品
 
-Rust 路径复用与黄区 bridge 构建相同的完整工作树、Cargo.lock 和本地 SDK path
-dependency。联网区先执行一次同一 bridge 的 release 构建并准备 Cargo 离线缓存；黄区
-配置 `MVP_BRIDGE_SOURCE`。脚本只在 bridge `examples/` 下创建一个临时符号链接，退出时
-删除，不改动 Cargo.toml 和源码。
+Rust 路径复用与黄区 bridge 构建相同的完整工作树、Cargo.lock 和本地 SDK path dependency。
+联网区先执行一次同一 bridge 的 release 构建并准备 Cargo 离线缓存；黄区配置 `MVP_BRIDGE_SOURCE`。
+脚本只在 bridge `examples/` 下创建一个临时符号链接，退出时删除，不改动 Cargo.toml 和源码。
 
 ## 5. 配置与前置检查
 
@@ -162,8 +160,8 @@ dependency。联网区先执行一次同一 bridge 的 release 构建并准备 C
 
 | 配置 | 用途 | clusters | 构建 worker | 数据文件目标 | 默认测试规模 |
 |---|---|---:|---:|---:|---:|
-| `mvp.env.example` | 部署、供数、索引和查询功能回归 | 256 | 1 | 分批供数，文件数可多于 32 | 100 queries |
-| `perf.env.example` | 可比较的 SIFT1M 性能与 Recall 测试 | 1024 | 8 | 32 buckets、约 32 个数据文件 | 矩阵每场景 100 queries；正式 Recall 10000 |
+| `mvp.env.example` | 部署、供数、索引和查询功能回归 | 256 | 1 | 分批供数，文件数可多于 32 | 前 100 条 queries |
+| `perf.env.example` | 可比较的 SIFT1M 性能与 Recall 测试 | 1024 | 8 | 32 buckets、约 32 个数据文件 | 全量中等距采样 100 queries；正式 Recall 10000 |
 
 功能回归配置：
 
@@ -172,9 +170,8 @@ cp config/mvp.env.example mvp.env
 vi mvp.env
 ```
 
-性能测试必须从 `perf.env.example` 创建 `mvp.env`，并使用新的 namespace、table 和
-空 warehouse 从 0 供数。使用 MVP 配置得到的索引构建时间、查询延迟和 DOP 数据不作为
-性能基线。
+性能测试必须从 `perf.env.example` 创建 `mvp.env`，并使用新的 namespace、table 和空 warehouse 从 0 供数。
+使用 MVP 配置得到的索引构建时间、查询延迟和 DOP 数据不作为性能基线。
 
 ```bash
 cp config/perf.env.example mvp.env
@@ -183,8 +180,9 @@ bash bin/run-clean-test.sh fresh pyiceberg
 python3 bin/run-matrix.py --output-dir state/matrix
 ```
 
-PyIceberg 是黄区已验证的默认性能供数路径。perf 配置使用一个 1000000 行批次，使
-PyIceberg 和 Rust fixture 通常分别生成 32 个分区数据文件；Spark 使用 32 个写入任务。
+PyIceberg 是黄区已验证的默认性能供数路径。
+perf 配置使用一个 1000000 行批次，使 PyIceberg 和 Rust fixture 通常分别生成 32 个分区数据文件；Spark 使用 32 个写入任务。
+perf 的 100-query 测试从官方 10000 条 query 中含首尾等距取序号 `0,101,202,...,9999`，并用同一组序号读取官方 ground truth。
 测试报告必须记录实际 Parquet 文件数和字节数，只有落盘布局一致的结果才能直接比较。
 
 ### 5.1 一键测试
@@ -214,8 +212,8 @@ bash bin/run-clean-test.sh reuse spark
 → IVF-PQ 建索引和测试
 ```
 
-流程结束时保留 IVF-PQ 索引和 PQ 配置。总日志写入
-`state/run-clean-test.log`，各模块保留独立日志或 JSON 结果。
+流程结束时保留 IVF-PQ 索引和 PQ 配置。
+总日志写入 `state/run-clean-test.log`，各模块保留独立日志或 JSON 结果。
 
 ### 5.2 清理级别
 
@@ -231,16 +229,14 @@ bash bin/clean.sh all
 | `results` | benchmark JSON、矩阵和运行日志 | Catalog 表、Iceberg 数据、`metadata_location.txt`、provider/table 定位文件 | 复用供数数据重测 |
 | `all` | 当前测试表的 Catalog 记录、两种 producer 表目录、bootstrap metadata、运行状态 | `downloads/` 中的 SIFT1M 原始文件、环境配置 | 从 0 重新供数 |
 
-`index` 使用 `iceberg_catalog.drop_index` 更新 metadata head，再调用
-`iceberg_catalog.vacuum_index` 回收可识别的索引文件。随后脚本校验当前 Registry
-为空、文件大小/SHA-256/table UUID 和路径边界均正确，并删除维护接口跳过的残留
-segment。最终索引目录只保留当前 metadata 引用的空 Registry。`all` 只删除
-`MVP_WAREHOUSE_DIR` 下与当前 namespace/table 精确匹配的 Spark/PyIceberg 和 Rust
-表目录，并删除当前表的 bootstrap 目录。
+`index` 使用 `iceberg_catalog.drop_index` 更新 metadata head，再调用 `iceberg_catalog.vacuum_index` 回收可识别的索引文件。
+随后脚本校验当前 Registry 为空、文件大小/SHA-256/table UUID 和路径边界均正确，并删除维护接口跳过的残留 segment。
+最终索引目录只保留当前 metadata 引用的空 Registry。
+`all` 只删除 `MVP_WAREHOUSE_DIR` 下与当前 namespace/table 精确匹配的 Spark/PyIceberg 和 Rust 表目录，并删除当前表的 bootstrap 目录。
 
 同一 SIFT1M 数据集在 schema、分区、压缩和 producer 版本保持一致时可持续复用。
-索引参数或 `nprobe` 变化只需要执行 `reuse`。供数布局或 producer 版本变化时执行
-`fresh`。
+索引参数或 `nprobe` 变化只需要执行 `reuse`。
+供数布局或 producer 版本变化时执行 `fresh`。
 
 ### 5.3 模块入口
 
@@ -280,6 +276,7 @@ segment。最终索引目录只保留当前 metadata 引用的空 Registry。`al
 | `MVP_TEST_K` | 10 | 一键测试 Top-K |
 | `MVP_TEST_WARMUP` | 5 | 每种扫描模式的预热查询数 |
 | `MVP_RECALL_NQ` | 10000 | 正式 Recall 使用的完整 SIFT query 数 |
+| `MVP_QUERY_SAMPLING` | first / equidistant | MVP / perf 的 query 选取方式 |
 | `MVP_MATRIX_NQ` | 100 | 性能矩阵每个场景、每轮的查询数 |
 | `MVP_MATRIX_ROUNDS` | 1 | 性能矩阵重复轮数 |
 | `MVP_MATRIX_K` | 10,100,1000,10000 | 性能矩阵 Top-K 集合 |
@@ -287,17 +284,94 @@ segment。最终索引目录只保留当前 metadata 引用的空 Registry。`al
 | `MVP_MATRIX_MODES` | index,fullscan | 性能矩阵扫描模式 |
 | `MVP_MATRIX_WARMUP` | 5 | 性能矩阵每个场景的预热 query 数 |
 
-`MVP_PARTITION_BUCKETS` 控制 Iceberg 文件布局和并行任务划分；
-`MVP_NUM_CLUSTERS` 控制 IVF 向量聚类。`mvp.env.example` 使用 256 clusters 缩短功能
-回归构建时间，`perf.env.example` 使用 1024 clusters 作为性能基线。两份配置均显式
-使用 `sample_rate=100000` 和 `nprobe=10`。
+`MVP_PARTITION_BUCKETS` 控制 Iceberg 文件布局和并行任务划分；`MVP_NUM_CLUSTERS` 控制 IVF 向量聚类。
+`mvp.env.example` 使用 256 clusters 缩短功能回归构建时间，`perf.env.example` 使用 1024 clusters 作为性能基线。
+两份配置均显式使用 `sample_rate=100000` 和 `nprobe=10`。
 
-蓝区 x86_64 功能验证显式设置 `MVP_ALLOW_NON_AARCH64=1`。黄区保持默认 aarch64
-门禁，蓝区结果只用于功能验证。
+### 5.5 参数对性能结果的影响
+
+修改参数后按以下级别重测：
+
+- **重新供数**：执行 `bash bin/run-clean-test.sh fresh <provider>`。
+  适用于 schema、压缩、分区和文件布局变化。
+- **重建索引**：执行 `bash bin/clean.sh index`，再执行 `bash bin/build-index.sh`。
+  适用于索引实现和构建参数变化。
+- **重跑查询**：保留数据和索引，执行 `bash bin/clean.sh results` 后重新运行测试模块。
+  适用于 nprobe、K、DOP、query sampling 和测量规模变化。
+
+#### 5.5.1 供数和文件布局
+
+| 参数 | 作用 | 影响的结果 | 修改后操作 |
+|---|---|---|---|
+| `MVP_WAREHOUSE_DIR` | 指定本地 Iceberg warehouse | 路径所在介质的带宽、延迟和缓存状态影响供数、索引构建和查询延迟 | 使用空目录重新供数 |
+| `MVP_NAMESPACE` / `MVP_TABLE` | 标识当前测试表 | 本身不调节性能；独立名称防止复用错误的 snapshot 或索引 | 新表重新供数；复用表先执行 `verify-table.sh` |
+| `MVP_ID_BASE` | 设置表 ID 和官方 GT 的偏移，SIFT1M 使用 1 | 错误值直接破坏 ID Recall；通常不改变距离计算延迟 | 重新供数并重跑查询 |
+| `MVP_COMPRESSION` | 设置 Parquet 压缩编码 | 影响 Parquet 字节数、供数耗时、解码 CPU、扫描延迟和索引构建读取时间 | 重新供数并重建索引 |
+| `MVP_PARTITION_BUCKETS` | 设置 `bucket(id, N)` 分区数 | 影响目录和文件布局、task group 数、索引 artifact 数、DOP 扩展性、构建时间、查询延迟；并行 ANN 下也可能影响 Recall | 重新供数并重建索引 |
+| `MVP_DATA_FILES` | 设置 Spark 写入任务数 | 影响 Spark 路径的文件数量和大小，进而影响扫描并行度、调度开销和索引构建读取效率；实际文件数以 artifact 为准 | Spark 重新供数并重建索引 |
+| `MVP_PYICEBERG_BATCH_ROWS` | 设置每次 PyIceberg append 的输入行数 | 批次越多，通常 snapshot 和每个 bucket 的数据文件越多；影响供数内存、metadata、文件打开开销、扫描和构建时间 | PyIceberg 重新供数并重建索引 |
+| `MVP_RUST_BATCH_ROWS` | 设置 Rust fixture 每个输入批次的行数 | 每批按 bucket 拆分文件；影响供数内存、文件数量、扫描和构建时间 | Rust 重新供数并重建索引 |
+| `MVP_CATALOG_BOOTSTRAP_DIR` | 指定 Catalog 空表的临时 metadata 位置 | 不参与最终数据扫描；介质故障或残留状态会影响接入流程，不作为查询性能参数 | 重新执行 Catalog 接入 |
+
+同一组性能结果必须记录 producer、compression、partition spec、Parquet 文件数和字节数。
+`MVP_DATA_FILES=32` 不保证所有 producer 都生成 32 个文件；PyIceberg 和 Rust 的文件数还取决于 batch rows，Spark 的文件数还取决于实际 shuffle 和 writer 行为。
+
+#### 5.5.2 索引构建和 ANN 查询
+
+| 参数 | 作用 | 影响的结果 | 修改后操作 |
+|---|---|---|---|
+| `MVP_INDEX_NAME` | 标识 Catalog 索引 | 名称本身不调节性能；同表保留多个活动向量索引会使 FDW 的索引选择不确定 | 清理旧索引后重建 |
+| `MVP_INDEX_TYPE` / `MVP_INDEX_IMPLEMENTATION` | 共同选择 Flat、PQ 或 BTree 实现 | 决定索引算法，直接影响构建时间、峰值内存、artifact 大小、查询延迟和 Recall | 清理索引后重建 |
+| `MVP_NUM_CLUSTERS` | 设置 IVF 聚类数 | 影响训练和构建资源、索引大小以及每次探测覆盖的数据量；固定 nprobe 时，clusters 增大通常减少扫描比例，Recall 和延迟均可能变化 | 清理索引后重建 |
+| `MVP_SAMPLE_RATE` | 设置索引训练采样参数 | 影响训练输入、质心质量、构建时间和内存，进而可能影响 Recall；实际采样量受实现上限约束 | 清理索引后重建 |
+| `MVP_BUILD_WORKERS` | 设置索引构建 worker 数 | 主要影响构建墙钟时间、CPU 和峰值内存；不作为查询并行度 | 清理索引后重建 |
+| `MVP_NPROBE` | 设置查询时探测的 IVF clusters 数 | 增大通常提高 Recall，同时增加候选计算、I/O 和查询延迟；clusters 不同时相同 nprobe 代表不同扫描比例 | 仅重跑索引查询 |
+
+PQ 的 `num_sub_quantizers` 和 `nbits` 当前不通过 `.env` 暴露。
+测试报告从 Registry segment 的 `algorithm_details` 记录实际值，不能仅根据 Catalog 请求参数推断落盘算法。
+
+#### 5.5.3 查询规模和统计口径
+
+| 参数 | 作用 | 影响的结果 | 修改后操作 |
+|---|---|---|---|
+| `MVP_TEST_NQ` | 设置一键快速测试的 query 数 | 不改变单条 SQL 语义；影响总耗时、Recall 样本量及 p50/p95/p99 稳定性 | 重跑查询 |
+| `MVP_TEST_K` | 设置快速测试返回的 Top-K | 影响结果行数和 Recall@K；内核按 `max(5×K, 50)` 计算 FetchK，上限 10000，因此也影响 ANN 候选数和延迟 | 重跑查询 |
+| `MVP_TEST_WARMUP` | 设置快速测试的预热 query 数 | 预热不计入统计；影响文件页、Parquet metadata 和索引缓存状态，通常影响冷启动后的延迟 | 重跑查询 |
+| `MVP_RECALL_NQ` | 设置 `test-index.sh <profile> recall` 的 query 数 | 影响 Recall 估计的覆盖度和总耗时；SIFT1M 正式结果使用全部 10000 条 | 重跑 Recall |
+| `MVP_QUERY_SAMPLING` | 选择前 N 条或全量中含首尾等距抽取 N 条 query | query 分布会改变 Recall 样本均值和延迟分布；比较结果时必须使用同一组序号 | 重跑查询 |
+| `MVP_MATRIX_K` | 设置矩阵的 K 集合 | 分别影响 FetchK、返回数据量、延迟和 Recall@K；官方 GT 只支持 K≤100 | 重跑矩阵 |
+| `MVP_MATRIX_DOP` | 设置矩阵的查询并行度集合 | 影响 worker 和 task group 数、CPU/内存、延迟和 QPS；当前分区 ANN 路径还会改变候选池上限，可能改变 Recall | 重跑矩阵 |
+| `MVP_MATRIX_MODES` | 选择 `index`、`fullscan` 或两者 | 决定测量 ANN 索引扫描、精确全扫或两者；两种模式用于计算加速比 | 重跑矩阵 |
+| `MVP_MATRIX_NQ` | 设置每个矩阵场景、每轮的 query 数 | 影响每场景总耗时和分位数稳定性；每轮使用 sampling 选定的同一组 query | 重跑矩阵 |
+| `MVP_MATRIX_ROUNDS` | 设置每个矩阵场景的重复轮数 | 影响总耗时和跨轮波动观察；增加轮数不增加 unique query 数 | 重跑矩阵 |
+| `MVP_MATRIX_WARMUP` | 设置每个矩阵场景的预热 query 数 | 影响缓存热度和后续延迟，不进入分位数样本 | 重跑矩阵 |
+
+`first` 使用序号 `0..N-1`，适合快速功能回归。
+`equidistant` 在 `[0,total-1]` 上含首尾等距取 N 个序号；SIFT1M 的 `total=10000,N=100` 对应 `0,101,202,...,9999`。
+结果 JSON 同时记录 `query_sampling` 和完整 `query_indices`，Recall 为 100 条 query 的命中数总和除以 `100×K`，等价于逐 query Recall@K 的算术平均。
+
+当前分区 ANN 路径中，内核为 K=10 设置 FetchK=50，为 K=100 设置 FetchK=500。
+每个并行 worker 对自己拥有的 partition segments 最多返回一份 FetchK 候选，再由 `LOCAL GATHER` 汇总并执行精确距离 Top-K。
+32-bucket 表在 DOP=1/2/4/8 时，候选上限可分别达到 1/2/4/8 倍 FetchK。
+因此 DOP 不只是延迟参数，不同 DOP 的性能结果必须同时报告 Recall；全扫结果用于验证精确 Recall 和并行加速。
+
+### 5.6 环境和工具参数
+
+| 参数 | 作用及结果边界 |
+|---|---|
+| `SPARK_HOME` / `ICEBERG_SPARK_RUNTIME_JAR` | 选择 Spark 和 Iceberg writer 版本；版本变化可能改变文件布局、metadata 和供数性能，结果按不同 producer 版本分组 |
+| `MVP_PYTHON_BIN` | 选择 PyIceberg producer 和 benchmark Python；包版本变化可能改变 writer 行为，benchmark Python 本身不进入 SQL statement time |
+| `MVP_BRIDGE_SOURCE` / `MVP_CARGO_BIN` | 选择 Rust fixture 的 SDK 工作树和工具链；SDK 变化可能改变 metadata 和 writer 行为 |
+| `MVP_GSQL_BIN` / `MVP_DB` / `MVP_PORT` | 选择数据库客户端和目标数据库；数据库实例、配置和当前负载属于性能结果环境信息 |
+| `MVP_GAUSSHOME` | 选择预检和运行时安装目录；bridge、Catalog、FDW 和内核二进制变化会影响全部功能与性能结果 |
+| `MVP_VECTOR_TYPE` | 设置查询向量 literal cast；必须与外表向量类型和 `<->` 运算符匹配，否则可能改变计划或使查询失败 |
+| `MVP_ALLOW_NON_AARCH64` | 只用于允许蓝区 x86_64 功能验证，不调节算法；不同架构的耗时结果分别报告 |
+
+蓝区 x86_64 功能验证显式设置 `MVP_ALLOW_NON_AARCH64=1`。
+黄区保持默认 aarch64 门禁，蓝区结果只用于功能验证。
 
 每条 producer 首次供数使用独立、空的 `MVP_WAREHOUSE_DIR`、`MVP_NAMESPACE` 和 `MVP_TABLE`。
-例如 Spark 使用 `sift_spark_part.sift1m_part`，PyIceberg 使用
-`sift_pyiceberg_part.sift1m_part`。
+例如 Spark 使用 `sift_spark_part.sift1m_part`，PyIceberg 使用 `sift_pyiceberg_part.sift1m_part`。
 
 按需运行预检：
 
@@ -308,9 +382,8 @@ bash bin/preflight.sh rust
 bash bin/preflight.sh all
 ```
 
-预检会记录架构、producer 版本、数据库连接、runtime jar/bridge/Catalog 哈希和
-warehouse 权限。若输出多份 bridge `.so`，先用 `readelf`、`ldd` 和
-`/proc/<pid>/maps` 确认实际加载副本。
+预检会记录架构、producer 版本、数据库连接、runtime jar/bridge/Catalog 哈希和 warehouse 权限。
+若输出多份 bridge `.so`，先用 `readelf`、`ldd` 和 `/proc/<pid>/maps` 确认实际加载副本。
 
 ## 6. Spark 供数
 
@@ -319,11 +392,11 @@ source mvp.env
 bash bin/seed-sift1m.sh
 ```
 
-脚本使用 `env -u LD_LIBRARY_PATH spark-submit`，按 516 字节定长记录解析 SIFT base，
-创建 Iceberg v2 表并写入字符串属性 `vector_dim.embedding=128`。完成后校验行数、属性
-和最新 metadata，再写入 `state/metadata_location.txt`。
+脚本使用 `env -u LD_LIBRARY_PATH spark-submit`，按 516 字节定长记录解析 SIFT base，创建 Iceberg v2 表并写入字符串属性 `vector_dim.embedding=128`。
+完成后校验行数、属性和最新 metadata，再写入 `state/metadata_location.txt`。
 
-Spark 表目录已存在时供数器拒绝运行。重复测试使用新目录和新表名。
+Spark 表目录已存在时供数器拒绝运行。
+重复测试使用新目录和新表名。
 
 ## 7. PyIceberg 供数
 
@@ -333,8 +406,8 @@ Spark 表目录已存在时供数器拒绝运行。重复测试使用新目录�
 MVP_BASE_PYTHON="$(command -v python3)" bash bin/install-pyiceberg-offline.sh
 ```
 
-安装器先校验 wheelhouse SHA-256，再以 `--no-index` 创建包内 `.venv`，最后运行
-`pip check`。把输出的 Python 路径写入 `mvp.env` 的 `MVP_PYTHON_BIN`。
+安装器先校验 wheelhouse SHA-256，再以 `--no-index` 创建包内 `.venv`，最后运行 `pip check`。
+把输出的 Python 路径写入 `mvp.env` 的 `MVP_PYTHON_BIN`。
 
 ### 7.2 写入
 
@@ -354,8 +427,8 @@ PyIceberg 供数器执行以下门禁：
 7. 校验最终 metadata 的 schema、partition spec、snapshot 和属性；
 8. 输出 Parquet 文件数、总字节数及最新 metadata URI。
 
-供数器不修改已发布 metadata，也不操作数据库 Catalog。统一接入脚本负责 Catalog 建表和
-metadata 切换。
+供数器不修改已发布 metadata，也不操作数据库 Catalog。
+统一接入脚本负责 Catalog 建表和 metadata 切换。
 
 ## 8. Rust fixture 供数
 
@@ -364,12 +437,11 @@ source mvp.env
 bash bin/seed-sift1m-rust.sh
 ```
 
-脚本复用 bridge 的 Cargo.lock，以 `--offline --locked --release` 编译套件内 Rust
-example。供数器流式验证 516 字节 fvecs 记录，按 Iceberg `bucket(id, N)` 变换拆分每个
-输入批次，为每个分区绑定 `PartitionKey`，再提交一个 Iceberg v2 snapshot。完成后校验
-partition spec 和每个 FileScanTask 的 partition 值并输出最新 metadata URI。默认
-`MVP_PARTITION_BUCKETS=32`；设为 `0` 时创建非分区表。Rust SDK schema 仍为
-`long + list<float>`；`vector_dim.embedding=128` 是表级审计属性。
+脚本复用 bridge 的 Cargo.lock，以 `--offline --locked --release` 编译套件内 Rust example。
+供数器流式验证 516 字节 fvecs 记录，按 Iceberg `bucket(id, N)` 变换拆分每个输入批次，为每个分区绑定 `PartitionKey`，再提交一个 Iceberg v2 snapshot。
+完成后校验 partition spec 和每个 FileScanTask 的 partition 值并输出最新 metadata URI。
+默认 `MVP_PARTITION_BUCKETS=32`；设为 `0` 时创建非分区表。
+Rust SDK schema 仍为 `long + list<float>`；`vector_dim.embedding=128` 是表级审计属性。
 
 ## 9. 统一 fixture 接入门禁
 
@@ -396,8 +468,7 @@ bash bin/register-table.sh
 - `count=1000000, min(id)=1, max(id)=1000000`。
 
 producer metadata 可以不含字段级 `vector_dim`；向量 SQL 类型来自 Catalog 主动建表 schema。
-`MVP_CATALOG_BOOTSTRAP_DIR` 可覆盖空表的临时位置，默认使用
-`MVP_WAREHOUSE_DIR/.catalog-bootstrap`。
+`MVP_CATALOG_BOOTSTRAP_DIR` 可覆盖空表的临时位置，默认使用 `MVP_WAREHOUSE_DIR/.catalog-bootstrap`。
 
 ## 10. 构建索引
 
@@ -409,30 +480,30 @@ index type 与 implementation 使用以下固定映射：
 | `ivf_pq` | `ivf_pq` | `builtin.ivf_pq@1` |
 | `btree` | `btree` | `BTree` |
 
-构建脚本拒绝表中未列出的组合。IVF-PQ 是 mvp.env 默认路径。PQ 与 Flat 一键切换命令为：
+构建脚本拒绝表中未列出的组合。
+IVF-PQ 是 mvp.env 默认路径。
+PQ 与 Flat 一键切换命令为：
 
 ```bash
 bash bin/configure-index.sh pq
 bash bin/configure-index.sh flat
 ```
 
-切换脚本同时更新索引名、type 和 implementation。Flat 使用
-`idx_sift_ivfflat + ivf_flat + ivf`，PQ 使用
-`idx_sift_ivfpq + ivf_pq + ivf_pq`。
+切换脚本同时更新索引名、type 和 implementation。
+Flat 使用 `idx_sift_ivfflat + ivf_flat + ivf`，PQ 使用 `idx_sift_ivfpq + ivf_pq + ivf_pq`。
 
 ```bash
 bash bin/build-index.sh
 ```
 
-串行冒烟配置保持 256 clusters、100000 sample、1 worker。`config/perf.env.example` 使用
-指南基线 1024 clusters、100000 sample、8 workers。索引状态必须为 `active`，Catalog
-中的 type/implementation 必须与当前配置一致。构建后门禁读取当前 metadata 指向的
-Registry Puffin，校验 Registry 大小、SHA-256、canonical implementation、`active` 状态、
-artifact 前缀、文件大小和落盘位置。墙钟耗时分别保存在
-`state/build-index-flat.log` 和 `state/build-index-pq.log`。
+串行冒烟配置保持 256 clusters、100000 sample、1 worker。
+`config/perf.env.example` 使用指南基线 1024 clusters、100000 sample、8 workers。
+索引状态必须为 `active`，Catalog 中的 type/implementation 必须与当前配置一致。
+构建后门禁读取当前 metadata 指向的 Registry Puffin，校验 Registry 大小、SHA-256、canonical implementation、`active` 状态、artifact 前缀、文件大小和落盘位置。
+墙钟耗时分别保存在 `state/build-index-flat.log` 和 `state/build-index-pq.log`。
 
-历史结果与新版性能基线参数不同，不能直接合并。调整 `nprobe` 时固定数据 snapshot 和
-索引，只修改外表 option。
+历史结果与新版性能基线参数不同，不能直接合并。
+调整 `nprobe` 时固定数据 snapshot 和索引，只修改外表 option。
 
 ## 11. 正确性和性能测试
 
@@ -448,11 +519,11 @@ bash bin/test-fullscan.sh
 
 ```bash
 python3 bin/benchmark.py \
-  --mode fullscan --query-dop 1 --nq 100 --k 10 \
+  --mode fullscan --query-dop 1 --nq 100 --query-sampling equidistant --k 10 \
   --output state/fullscan.json
 ```
 
-前 100 条查询的距离阈值 Recall@10 必须为 1.0。
+perf 配置等距采样 100 条查询，MVP 配置使用前 100 条查询；全扫距离阈值 Recall@10 必须为 1.0。
 
 ### 11.2 索引 Recall 和延迟
 
@@ -463,8 +534,7 @@ bash bin/test-index.sh pq
 # 当前配置和活动索引为 Flat 时：bash bin/test-index.sh flat
 ```
 
-上述快速入口使用 100 条 query。正式 Recall 使用官方 SIFT1M 的全部 10000 条 query
-及相同序号的 ground truth：
+上述快速入口使用 100 条 query。正式 Recall 使用官方 SIFT1M 的全部 10000 条 query 及相同序号的 ground truth：
 
 ```bash
 bash bin/test-index.sh pq recall
@@ -475,12 +545,13 @@ bash bin/test-index.sh pq recall
 
 ```bash
 python3 bin/benchmark.py \
-  --mode index --query-dop 1 --nq 100 --k 10 --nprobe 10 \
+  --mode index --query-dop 1 --nq 100 --query-sampling equidistant \
+  --k 10 --nprobe 10 \
   --output state/index-nprobe10.json
 ```
 
-索引计划必须包含 `Vector Search` 和 `bridge vector index scan`。脚本输出官方 GT 的 ID
-Recall、等距容忍 Recall、QPS、mean、p50/p95/p99、逐查询耗时和完整计划。
+索引计划必须包含 `Vector Search` 和 `bridge vector index scan`。
+脚本输出官方 GT 的 ID Recall、等距容忍 Recall、QPS、mean、p50/p95/p99、逐查询耗时和完整计划。
 
 ### 11.3 K×DOP 矩阵
 
@@ -490,15 +561,17 @@ Recall、等距容忍 Recall、QPS、mean、p50/p95/p99、逐查询耗时和完�
 python3 bin/run-matrix.py --output-dir state/matrix
 ```
 
-默认矩阵为 K=`10,100,1000,10000`、DOP=`1,2,4,8`、index/fullscan、每个场景
-100 条 query、1 轮和 5 条预热 query。默认值读取 `MVP_MATRIX_*`；需要比较重复轮次
-波动时设置 `MVP_MATRIX_ROUNDS=3` 或传入 `--rounds 3`。
+默认矩阵为 K=`10,100,1000,10000`、DOP=`1,2,4,8`、index/fullscan、每个场景 100 条 query、1 轮和 5 条预热 query。
+perf 配置默认使用 `equidistant`；可通过 `--query-sampling first|equidistant` 显式覆盖。
+默认值读取 `MVP_MATRIX_*`；需要比较重复轮次波动时设置 `MVP_MATRIX_ROUNDS=3` 或传入 `--rounds 3`。
+矩阵使用 100 条不同 query 统计延迟分布；单条 query 重复执行只反映该 query 的运行波动，两种结果不能直接比较。
 
-DOP>1 默认要求计划出现对应的 `LOCAL GATHER dop: 1/N`。未分区表只执行 `--dop 1`；
-`--allow-serial-fallback` 仅用于诊断，带该选项的结果不能声明为并行结果。
+DOP>1 默认要求计划出现对应的 `LOCAL GATHER dop: 1/N`。
+未分区表只执行 `--dop 1`；`--allow-serial-fallback` 仅用于诊断，带该选项的结果不能声明为并行结果。
 
-SIFT 官方 GT 只包含 top-100。K≤100 计算官方 Recall；K>100 自动使用
-`--skip-recall`，只输出性能。报告中不得把 K>100 标记为官方召回率。
+SIFT 官方 GT 只包含 top-100。
+K≤100 计算官方 Recall；K>100 自动使用 `--skip-recall`，只输出性能。
+报告中不得把 K>100 标记为官方召回率。
 
 完整矩阵开销较高，计划和链路诊断可先执行单查询子集：
 
@@ -547,37 +620,36 @@ MVP_OFFLINE_PROVIDER=rust bash bin/make-offline-bundle.sh
 ```
 
 完整包包含 SIFT1M 数据；PyIceberg 模式还强制包含经过 SHA-256 校验的 wheelhouse。
-`state/`、`.venv/` 和 Python cache 不进入包。Spark/JDK/runtime 使用 `mvp.env` 中的黄区
-绝对路径。
+`state/`、`.venv/` 和 Python cache 不进入包。
+Spark/JDK/runtime 使用 `mvp.env` 中的黄区绝对路径。
 
 ## 14. 常见故障
 
 ### 基础表或 Delta 伴生表为 `text`
 
-确认安装的 Catalog 支持 `create_table` schema 字段级 `vector_dim`，并检查
-`state/register-table.log`。接入脚本不会从 producer metadata 推导 SQL 类型，也不操作或
-检查 Delta。Catalog 主动建表避免基础表与 hook 生成对象分别取自不同 schema；后续数据
-扫描和向量查询负责验证实际执行链路。
+确认安装的 Catalog 支持 `create_table` schema 字段级 `vector_dim`，并检查 `state/register-table.log`。
+接入脚本不会从 producer metadata 推导 SQL 类型，也不操作或检查 Delta。
+Catalog 主动建表避免基础表与 hook 生成对象分别取自不同 schema；后续数据扫描和向量查询负责验证实际执行链路。
 
 ### DOP 不生效
 
-确认表的默认 partition spec 含 `bucket[32]`，每个 FileScanTask 带 partition 信息，
-`query_dop>1`，计划中出现 `LOCAL GATHER dop: 1/N`。未分区表始终是串行基线。
+确认表的默认 partition spec 含 `bucket[32]`，每个 FileScanTask 带 partition 信息，`query_dop>1`，计划中出现 `LOCAL GATHER dop: 1/N`。
+未分区表始终是串行基线。
 
 ### PyIceberg wheel 无法安装
 
-wheel 必须匹配目标架构、Python ABI 和 glibc。回到同构联网机器重新生成 wheelhouse，
-不要在黄区启用网络索引或现场编译 PyArrow。
+wheel 必须匹配目标架构、Python ABI 和 glibc。
+回到同构联网机器重新生成 wheelhouse，不要在黄区启用网络索引或现场编译 PyArrow。
 
 ### Spark 或 PyIceberg 被数据库动态库污染
 
-所有 producer 命令均清除 `LD_LIBRARY_PATH`。数据库环境脚本只用于数据库命令，不在
-producer 前重新 source。
+所有 producer 命令均清除 `LD_LIBRARY_PATH`。
+数据库环境脚本只用于数据库命令，不在 producer 前重新 source。
 
 ### Rust fixture 找不到 example 或依赖
 
-确认 `MVP_BRIDGE_SOURCE` 指向完整 bridge 工作树，Rust 工具链满足其 `rust-version`，并且
-联网区已经用同一 Cargo.lock 填充黄区离线缓存。脚本拒绝覆盖 bridge 中已有的同名 example。
+确认 `MVP_BRIDGE_SOURCE` 指向完整 bridge 工作树，Rust 工具链满足其 `rust-version`，并且联网区已经用同一 Cargo.lock 填充黄区离线缓存。
+脚本拒绝覆盖 bridge 中已有的同名 example。
 
 ## 15. 来源
 

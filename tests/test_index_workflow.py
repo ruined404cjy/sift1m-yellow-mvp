@@ -39,12 +39,15 @@ class IndexWorkflowTest(unittest.TestCase):
         self.assertIn("MVP_PYICEBERG_BATCH_ROWS=1000000", perf)
         self.assertIn("MVP_RUST_BATCH_ROWS=1000000", perf)
         self.assertIn("MVP_RECALL_NQ=10000", perf)
+        self.assertIn("MVP_QUERY_SAMPLING=equidistant", perf)
         self.assertIn("MVP_MATRIX_NQ=100", perf)
         self.assertIn("MVP_MATRIX_ROUNDS=1", perf)
         self.assertIn('config.get("MVP_MATRIX_NQ", "100")', MATRIX)
         self.assertIn('config.get("MVP_MATRIX_ROUNDS", "1")', MATRIX)
         self.assertIn('scope="${2:-quick}"', INDEX_TEST)
         self.assertIn('test_nq="${MVP_RECALL_NQ:-10000}"', INDEX_TEST)
+        self.assertIn('--query-sampling "${MVP_QUERY_SAMPLING:-first}"', INDEX_TEST)
+        self.assertIn('config.get("MVP_QUERY_SAMPLING", "first")', MATRIX)
 
     def test_profile_switch_updates_complete_pair(self):
         source = ROOT / "config/mvp.env.example"

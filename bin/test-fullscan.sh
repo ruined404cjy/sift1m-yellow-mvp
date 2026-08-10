@@ -18,4 +18,5 @@ python3 "$root_dir/bin/benchmark.py" \
   --nq "${MVP_TEST_NQ:-100}" \
   --k "${MVP_TEST_K:-10}" \
   --warmup "${MVP_TEST_WARMUP:-5}" \
+  --query-sampling "${MVP_QUERY_SAMPLING:-first}" \
   --output "$root_dir/state/fullscan.json"

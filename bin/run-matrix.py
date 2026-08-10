@@ -58,6 +58,11 @@ def main() -> None:
     parser.add_argument(
         "--warmup", type=int, default=int(config.get("MVP_MATRIX_WARMUP", "5"))
     )
+    parser.add_argument(
+        "--query-sampling",
+        choices=("first", "equidistant"),
+        default=config.get("MVP_QUERY_SAMPLING", "first"),
+    )
     parser.add_argument("--nprobe", type=int)
     parser.add_argument("--allow-serial-fallback", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=root_dir / "state/matrix")
@@ -86,6 +91,7 @@ def main() -> None:
                         "--nq", str(args.nq),
                         "--k", str(k),
                         "--warmup", str(args.warmup),
+                        "--query-sampling", args.query_sampling,
                         "--query-dop", str(dop),
                         "--output", str(output),
                     ]
@@ -111,6 +117,7 @@ def main() -> None:
         "modes": modes,
         "rounds": args.rounds,
         "query_count_per_round": args.nq,
+        "query_sampling": args.query_sampling,
         "results": results,
     }
     summary_path = args.output_dir / "summary.json"

@@ -75,5 +75,6 @@ python3 "$root_dir/bin/benchmark.py" \
   --nq "$test_nq" \
   --k "${MVP_TEST_K:-10}" \
   --warmup "${MVP_TEST_WARMUP:-5}" \
+  --query-sampling "${MVP_QUERY_SAMPLING:-first}" \
   --nprobe "${MVP_NPROBE:-10}" \
   --output "$output"

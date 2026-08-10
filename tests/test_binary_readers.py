@@ -24,8 +24,8 @@ class BinaryReaderTest(unittest.TestCase):
             query.write_bytes(struct.pack("<i128f", 128, *range(128)))
             groundtruth.write_bytes(struct.pack("<i100i", 100, *range(100)))
 
-            vectors = BENCHMARK.read_fvecs(query, 1)
-            neighbors = BENCHMARK.read_ivecs(groundtruth, 1, 10, 1)
+            vectors = BENCHMARK.read_fvecs(query, [0])
+            neighbors = BENCHMARK.read_ivecs(groundtruth, [0], 10, 1)
             self.assertEqual(len(vectors[0]), 128)
             self.assertEqual(vectors[0][127], 127.0)
             self.assertEqual(neighbors[0], list(range(1, 11)))
@@ -48,11 +48,38 @@ class BinaryReaderTest(unittest.TestCase):
                 + struct.pack("<i100i", 100, *range(1000, 1100))
             )
 
-            vectors = BENCHMARK.read_fvecs(query, 2)
-            neighbors = BENCHMARK.read_ivecs(groundtruth, 2, 10, 1)
+            vectors = BENCHMARK.read_fvecs(query, [0, 1])
+            neighbors = BENCHMARK.read_ivecs(groundtruth, [0, 1], 10, 1)
             self.assertEqual(vectors[1][0], 1000.0)
             self.assertEqual(vectors[1][-1], 1127.0)
             self.assertEqual(neighbors[1], list(range(1001, 1011)))
+
+    def test_equidistant_sampling_uses_matching_query_and_groundtruth_indices(self):
+        indices = BENCHMARK.select_query_indices(10_000, 100, "equidistant")
+        self.assertEqual(indices, list(range(0, 10_000, 101)))
+        self.assertEqual(BENCHMARK.select_query_indices(10_000, 1, "equidistant"), [0])
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            query = root / "query.fvecs"
+            groundtruth = root / "groundtruth.ivecs"
+            query.write_bytes(
+                b"".join(
+                    struct.pack("<i128f", 128, *([index] * 128))
+                    for index in range(4)
+                )
+            )
+            groundtruth.write_bytes(
+                b"".join(
+                    struct.pack("<i100i", 100, *range(index * 100, index * 100 + 100))
+                    for index in range(4)
+                )
+            )
+
+            vectors = BENCHMARK.read_fvecs(query, [0, 3])
+            neighbors = BENCHMARK.read_ivecs(groundtruth, [0, 3], 10, 1)
+            self.assertEqual([vector[0] for vector in vectors], [0.0, 3.0])
+            self.assertEqual(neighbors[1], list(range(301, 311)))
 
     def test_percentile(self):
         self.assertEqual(BENCHMARK.percentile([1.0, 2.0, 3.0], 50), 2.0)

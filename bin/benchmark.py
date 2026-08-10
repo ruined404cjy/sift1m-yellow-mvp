@@ -41,32 +41,59 @@ def read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def read_fvecs(path: Path, count: int) -> list[list[float]]:
-    """读取前 count 条 128 维 little-endian fvecs。"""
+def select_query_indices(total: int, count: int, sampling: str) -> list[int]:
+    """按顺序或含首尾等距方式选择 query 序号。"""
+    if not 1 <= count <= total:
+        raise ValueError(f"query 数必须在 1..{total} 范围内")
+    if sampling == "first":
+        return list(range(count))
+    if sampling == "equidistant":
+        if count == 1:
+            return [0]
+        return [index * (total - 1) // (count - 1) for index in range(count)]
+    raise ValueError(f"不支持的 query sampling: {sampling}")
+
+
+def record_count(path: Path, record_bytes: int, label: str) -> int:
+    """按定长记录校验文件并返回记录数。"""
+    size = path.stat().st_size
+    if size % record_bytes != 0:
+        raise ValueError(f"{label} 文件大小 {size} 不是记录长度 {record_bytes} 的整数倍")
+    return size // record_bytes
+
+
+def read_fvecs(path: Path, indices: Sequence[int]) -> list[list[float]]:
+    """按指定序号读取 128 维 little-endian fvecs。"""
     result: list[list[float]] = []
     with path.open("rb") as handle:
-        for _ in range(count):
+        for index in indices:
+            handle.seek(index * QUERY_RECORD_BYTES)
             raw = handle.read(QUERY_RECORD_BYTES)
             if len(raw) != QUERY_RECORD_BYTES:
-                raise EOFError(f"{path} 不足 {count} 条记录")
+                raise EOFError(f"{path} 不含 query {index}")
             dimension = struct.unpack_from("<i", raw, 0)[0]
             if dimension != 128:
-                raise ValueError(f"query 维度为 {dimension}，期望 128")
+                raise ValueError(f"query {index} 维度为 {dimension}，期望 128")
             result.append(list(struct.unpack_from("<128f", raw, 4)))
     return result
 
 
-def read_ivecs(path: Path, count: int, k: int, id_base: int) -> list[list[int]]:
-    """读取前 count 条 top-100 ivecs，并按表 ID 基数修正。"""
+def read_ivecs(
+    path: Path, indices: Sequence[int], k: int, id_base: int
+) -> list[list[int]]:
+    """按指定 query 序号读取 top-100 ivecs，并按表 ID 基数修正。"""
     result: list[list[int]] = []
     with path.open("rb") as handle:
-        for _ in range(count):
+        for index in indices:
+            handle.seek(index * GT_RECORD_BYTES)
             raw = handle.read(GT_RECORD_BYTES)
             if len(raw) != GT_RECORD_BYTES:
-                raise EOFError(f"{path} 不足 {count} 条记录")
+                raise EOFError(f"{path} 不含 ground truth {index}")
             dimension = struct.unpack_from("<i", raw, 0)[0]
             if dimension != 100:
-                raise ValueError(f"ground truth 宽度为 {dimension}，期望 100")
+                raise ValueError(
+                    f"ground truth {index} 宽度为 {dimension}，期望 100"
+                )
             values = struct.unpack_from("<100i", raw, 4)
             result.append([value + id_base for value in values[:k]])
     return result
@@ -276,6 +303,11 @@ def main() -> None:
     parser.add_argument(
         "--warmup", type=int, default=int(config.get("MVP_TEST_WARMUP", "5"))
     )
+    parser.add_argument(
+        "--query-sampling",
+        choices=("first", "equidistant"),
+        default=config.get("MVP_QUERY_SAMPLING", "first"),
+    )
     parser.add_argument("--nprobe", type=int, default=int(config.get("MVP_NPROBE", "10")))
     parser.add_argument("--query-dop", type=int, default=1)
     parser.add_argument("--require-parallel-plan", action="store_true")
@@ -320,11 +352,22 @@ def main() -> None:
         validate_identifier(value, label)
 
     table_name = f"{args.namespace}.{args.table}"
-    queries = read_fvecs(args.query_file, args.nq)
+    total_queries = record_count(args.query_file, QUERY_RECORD_BYTES, "query")
+    query_indices = select_query_indices(
+        total_queries, args.nq, args.query_sampling
+    )
+    queries = read_fvecs(args.query_file, query_indices)
     groundtruth = None
     if not args.skip_recall:
+        groundtruth_count = record_count(
+            args.groundtruth_file, GT_RECORD_BYTES, "ground truth"
+        )
+        if groundtruth_count != total_queries:
+            raise ValueError(
+                f"query/ground truth 记录数不一致: {total_queries}/{groundtruth_count}"
+            )
         groundtruth = read_ivecs(
-            args.groundtruth_file, args.nq, args.k, args.id_base
+            args.groundtruth_file, query_indices, args.k, args.id_base
         )
     if args.mode == "index":
         configure_nprobe(args, table_name)
@@ -368,9 +411,11 @@ def main() -> None:
     total_id_hits = 0
     total_distance_hits = 0
     if groundtruth is None:
-        for index, (actual, elapsed_ms) in enumerate(zip(result_ids, query_times_ms)):
+        for query_index, actual, elapsed_ms in zip(
+            query_indices, result_ids, query_times_ms
+        ):
             per_query.append({
-                "query_index": index,
+                "query_index": query_index,
                 "elapsed_ms": elapsed_ms,
                 "id_hits": None,
                 "distance_threshold_hits": None,
@@ -379,8 +424,8 @@ def main() -> None:
     else:
         vector_cache: dict[int, tuple[float, ...]] = {}
         with args.base_file.open("rb") as base_handle:
-            for index, (query, actual, expected, elapsed_ms) in enumerate(
-                zip(queries, result_ids, groundtruth, query_times_ms)
+            for query_index, query, actual, expected, elapsed_ms in zip(
+                query_indices, queries, result_ids, groundtruth, query_times_ms
             ):
                 returned = actual[: args.k]
                 id_hits = len(set(returned) & set(expected))
@@ -399,7 +444,7 @@ def main() -> None:
                 )
                 total_distance_hits += distance_hits
                 per_query.append({
-                    "query_index": index,
+                    "query_index": query_index,
                     "elapsed_ms": elapsed_ms,
                     "id_hits": id_hits,
                     "distance_threshold_hits": distance_hits,
@@ -417,6 +462,8 @@ def main() -> None:
         "table": table_name,
         "vector_cast": args.vector_cast,
         "query_count": args.nq,
+        "query_sampling": args.query_sampling,
+        "query_indices": query_indices,
         "top_k": args.k,
         "id_base": args.id_base,
         "nprobe": args.nprobe if args.mode == "index" else None,
