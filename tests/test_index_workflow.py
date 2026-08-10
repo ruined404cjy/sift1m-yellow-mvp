@@ -119,20 +119,30 @@ class IndexWorkflowTest(unittest.TestCase):
         self.assertIn('provider="${2:-pyiceberg}"', RUNNER)
         self.assertIn('MVP_CONFIG_PROFILE:-', RUNNER)
 
-    def test_perf_runner_covers_fullscan_flat_and_pq_in_order(self):
+    def test_perf_runner_covers_flat_pq_and_clean_fullscan_in_order(self):
         self.assertIn('MVP_CONFIG_PROFILE:-', PERF_RUNNER)
         self.assertIn('MVP_PERF_K:-10,100', PERF_RUNNER)
         self.assertIn('MVP_PERF_DOP:-1,8', PERF_RUNNER)
         self.assertIn('MVP_PERF_NQ:-100', PERF_RUNNER)
-        fullscan = PERF_RUNNER.index('run_matrix fullscan')
-        flat_config = PERF_RUNNER.index('configure-index.sh" flat', fullscan)
+        flat_config = PERF_RUNNER.index('configure-index.sh" flat')
         flat_matrix = PERF_RUNNER.index('run_matrix index "$root_dir/state/perf/flat"')
-        index_clean = PERF_RUNNER.index('clean.sh" index', flat_matrix)
-        pq_config = PERF_RUNNER.index('configure-index.sh" pq', index_clean)
+        flat_clean = PERF_RUNNER.index('clean.sh" index', flat_matrix)
+        pq_config = PERF_RUNNER.index('configure-index.sh" pq', flat_clean)
         pq_matrix = PERF_RUNNER.index('run_matrix index "$root_dir/state/perf/pq"')
+        pq_clean = PERF_RUNNER.index('clean.sh" index', pq_matrix)
+        fullscan = PERF_RUNNER.index('run_matrix fullscan', pq_clean)
+        expected_order = [
+            flat_config,
+            flat_matrix,
+            flat_clean,
+            pq_config,
+            pq_matrix,
+            pq_clean,
+            fullscan,
+        ]
         self.assertEqual(
-            [fullscan, flat_config, flat_matrix, index_clean, pq_config, pq_matrix],
-            sorted([fullscan, flat_config, flat_matrix, index_clean, pq_config, pq_matrix]),
+            expected_order,
+            sorted(expected_order),
         )
 
     def test_config_initializer_creates_one_profile_and_refuses_mismatch(self):

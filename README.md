@@ -219,7 +219,7 @@ bash bin/run-perf.sh
 # 复用已供数据：bash bin/run-perf.sh reuse pyiceberg
 ```
 
-perf 流程执行环境检查、部署、供数或复用门禁，然后依次运行全扫、IVF-Flat 和 IVF-PQ。每条路径默认执行 K=`10,100` × DOP=`1,8` 的 4 个场景，共 12 个场景；每个场景从官方 query 中含首尾等距取 100 条，预热 5 条。DOP>1 必须通过 `LOCAL GATHER` 计划门禁。结果分别保存到 `state/perf/fullscan`、`state/perf/flat` 和 `state/perf/pq`，总日志保存到 `state/run-perf.log`。流程结束时保留 PQ 索引。
+perf 流程执行环境检查、部署、供数或复用门禁，然后依次运行 IVF-Flat、IVF-PQ 和无索引全扫。每条路径默认执行 K=`10,100` × DOP=`1,8` 的 4 个场景，共 12 个场景；每个场景从官方 query 中含首尾等距取 100 条，预热 5 条。DOP>1 必须通过 `LOCAL GATHER` 计划门禁。结果分别保存到 `state/perf/flat`、`state/perf/pq` 和 `state/perf/fullscan`，总日志保存到 `state/run-perf.log`。PQ 测试完成后清理索引，再运行全扫；流程结束时不保留索引，索引配置保持 PQ。
 
 `run-perf.sh` 是日常代表性性能验证入口。完整的 K=`10,100,1000,10000` × DOP=`1,2,4,8` × index/fullscan 矩阵继续使用 `run-matrix.py`。
 
@@ -257,7 +257,7 @@ bash bin/clean.sh all
 | 全表测试 | `bash bin/test-fullscan.sh` | 执行串行全扫 Recall 与延迟测试 |
 | 索引测试 | `bash bin/test-index.sh <flat\|pq> [quick\|recall]` | 校验当前索引契约后执行快速测试或完整 Recall |
 | MVP 总流程 | `bash bin/run-clean-test.sh [fresh\|reuse] [provider]` | 默认 `fresh pyiceberg`，执行全扫、Flat、PQ 功能闭环 |
-| perf 总流程 | `bash bin/run-perf.sh [fresh\|reuse] [provider]` | 默认 `fresh pyiceberg`，执行全扫、Flat、PQ 代表性性能矩阵 |
+| perf 总流程 | `bash bin/run-perf.sh [fresh\|reuse] [provider]` | 默认 `fresh pyiceberg`，执行 Flat、PQ、全扫代表性性能矩阵 |
 
 ### 5.4 主要参数
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 编排全扫、IVF-Flat 和 IVF-PQ 的代表性 SIFT1M 性能测试。
+# 编排 IVF-Flat、IVF-PQ 和全扫的代表性 SIFT1M 性能测试。
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -72,8 +72,6 @@ run_steps() {
   fi
 
   bash "$root_dir/bin/verify-table.sh"
-  run_matrix fullscan "$root_dir/state/perf/fullscan"
-
   bash "$root_dir/bin/configure-index.sh" flat
   bash "$root_dir/bin/build-index.sh"
   run_matrix index "$root_dir/state/perf/flat"
@@ -82,7 +80,10 @@ run_steps() {
   bash "$root_dir/bin/configure-index.sh" pq
   bash "$root_dir/bin/build-index.sh"
   run_matrix index "$root_dir/state/perf/pq"
-  echo "一键性能测试完成；当前保留 PQ 索引。"
+
+  bash "$root_dir/bin/clean.sh" index
+  run_matrix fullscan "$root_dir/state/perf/fullscan"
+  echo "一键性能测试完成；当前未保留索引，索引配置保持 PQ。"
 }
 
 run_log="$(mktemp /tmp/sift1m-perf.XXXXXX.log)"
