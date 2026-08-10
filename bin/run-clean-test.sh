@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
-# 编排从零供数或复用供数数据的 Flat、PQ、全表一键测试。
+# 使用 MVP 配置编排从供数到默认 PQ 索引的完整功能回归。
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-mode="${1:-}"
-provider="${2:-}"
+env_file="$root_dir/mvp.env"
+mode="${1:-fresh}"
+provider="${2:-pyiceberg}"
+if [[ ! -f "$env_file" ]]; then
+  echo "ERROR: 缺少 $env_file" >&2
+  echo "ERROR: 先执行 bash bin/init-env.sh mvp $provider，并按提示补全配置。" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$env_file"
+if [[ "${MVP_CONFIG_PROFILE:-}" != "mvp" ]]; then
+  echo "ERROR: run-clean-test.sh 要求 MVP_CONFIG_PROFILE=mvp" >&2
+  echo "ERROR: 请使用 config/mvp.env.example 重新创建 mvp.env。" >&2
+  exit 1
+fi
 if [[ "$mode" != "fresh" && "$mode" != "reuse" ]]; then
-  echo "Usage: bash bin/run-clean-test.sh <fresh|reuse> <spark|pyiceberg|rust>" >&2
+  echo "Usage: bash bin/run-clean-test.sh [fresh|reuse] [spark|pyiceberg|rust]" >&2
   exit 2
 fi
 if [[ "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" ]]; then
-  echo "Usage: bash bin/run-clean-test.sh <fresh|reuse> <spark|pyiceberg|rust>" >&2
+  echo "Usage: bash bin/run-clean-test.sh [fresh|reuse] [spark|pyiceberg|rust]" >&2
   exit 2
 fi
 

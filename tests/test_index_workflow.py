@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = (ROOT / "bin/build-index.sh").read_text(encoding="utf-8")
 CLEAN = (ROOT / "bin/clean.sh").read_text(encoding="utf-8")
 RUNNER = (ROOT / "bin/run-clean-test.sh").read_text(encoding="utf-8")
+PERF_RUNNER = (ROOT / "bin/run-perf.sh").read_text(encoding="utf-8")
 MATRIX = (ROOT / "bin/run-matrix.py").read_text(encoding="utf-8")
 INDEX_TEST = (ROOT / "bin/test-index.sh").read_text(encoding="utf-8")
 
@@ -26,8 +27,12 @@ class IndexWorkflowTest(unittest.TestCase):
         self.assertIn("builtin.ivf_pq@1", BUILD)
 
     def test_example_defaults_to_pq(self):
-        for filename in ("mvp.env.example", "perf.env.example"):
+        for profile, filename in (
+            ("mvp", "mvp.env.example"),
+            ("perf", "perf.env.example"),
+        ):
             config = (ROOT / "config" / filename).read_text(encoding="utf-8")
+            self.assertIn(f"MVP_CONFIG_PROFILE={profile}", config)
             self.assertIn("MVP_INDEX_TYPE=ivf_pq", config)
             self.assertIn("MVP_INDEX_IMPLEMENTATION=ivf_pq", config)
 
@@ -42,6 +47,9 @@ class IndexWorkflowTest(unittest.TestCase):
         self.assertIn("MVP_QUERY_SAMPLING=equidistant", perf)
         self.assertIn("MVP_MATRIX_NQ=100", perf)
         self.assertIn("MVP_MATRIX_ROUNDS=1", perf)
+        self.assertIn("MVP_PERF_K=10,100", perf)
+        self.assertIn("MVP_PERF_DOP=1,8", perf)
+        self.assertIn("MVP_PERF_NQ=100", perf)
         self.assertIn('config.get("MVP_MATRIX_NQ", "100")', MATRIX)
         self.assertIn('config.get("MVP_MATRIX_ROUNDS", "1")', MATRIX)
         self.assertIn('scope="${2:-quick}"', INDEX_TEST)
@@ -94,7 +102,7 @@ class IndexWorkflowTest(unittest.TestCase):
 
     def test_runner_supports_fresh_and_reuse_in_expected_order(self):
         self.assertIn('"$mode" == "fresh"', RUNNER)
-        self.assertIn('<fresh|reuse>', RUNNER)
+        self.assertIn('[fresh|reuse]', RUNNER)
         fullscan = RUNNER.index('test-fullscan.sh')
         flat_config = RUNNER.index('configure-index.sh" flat', fullscan)
         flat_test = RUNNER.index('test-index.sh" flat', flat_config)
@@ -106,13 +114,68 @@ class IndexWorkflowTest(unittest.TestCase):
             sorted([fullscan, flat_config, flat_test, index_clean, pq_config, pq_test]),
         )
 
+    def test_mvp_entrypoint_defaults_to_fresh_pyiceberg(self):
+        self.assertIn('mode="${1:-fresh}"', RUNNER)
+        self.assertIn('provider="${2:-pyiceberg}"', RUNNER)
+        self.assertIn('MVP_CONFIG_PROFILE:-', RUNNER)
+
+    def test_perf_runner_covers_fullscan_flat_and_pq_in_order(self):
+        self.assertIn('MVP_CONFIG_PROFILE:-', PERF_RUNNER)
+        self.assertIn('MVP_PERF_K:-10,100', PERF_RUNNER)
+        self.assertIn('MVP_PERF_DOP:-1,8', PERF_RUNNER)
+        self.assertIn('MVP_PERF_NQ:-100', PERF_RUNNER)
+        fullscan = PERF_RUNNER.index('run_matrix fullscan')
+        flat_config = PERF_RUNNER.index('configure-index.sh" flat', fullscan)
+        flat_matrix = PERF_RUNNER.index('run_matrix index "$root_dir/state/perf/flat"')
+        index_clean = PERF_RUNNER.index('clean.sh" index', flat_matrix)
+        pq_config = PERF_RUNNER.index('configure-index.sh" pq', index_clean)
+        pq_matrix = PERF_RUNNER.index('run_matrix index "$root_dir/state/perf/pq"')
+        self.assertEqual(
+            [fullscan, flat_config, flat_matrix, index_clean, pq_config, pq_matrix],
+            sorted([fullscan, flat_config, flat_matrix, index_clean, pq_config, pq_matrix]),
+        )
+
+    def test_config_initializer_creates_one_profile_and_refuses_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / "mvp.env"
+            environment = os.environ | {
+                "MVP_ENV_FILE": str(env_file),
+                "MVP_NAMESPACE": "auto_config_ns",
+            }
+            subprocess.run(
+                ["bash", str(ROOT / "bin/init-env.sh"), "mvp"],
+                check=True,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            initialized = env_file.read_text()
+            self.assertIn("MVP_CONFIG_PROFILE=mvp", initialized)
+            self.assertIn("MVP_NAMESPACE=auto_config_ns", initialized)
+            mismatch = subprocess.run(
+                ["bash", str(ROOT / "bin/init-env.sh"), "perf"],
+                check=False,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("期望 perf", mismatch.stderr)
+
+    def test_config_initializer_uses_locked_pyiceberg_installer(self):
+        initializer = (ROOT / "bin/init-env.sh").read_text(encoding="utf-8")
+        self.assertIn("install-pyiceberg-offline.sh", initializer)
+        self.assertIn("wheelhouse/SHA256SUMS", initializer)
+
     def test_new_workflow_does_not_reference_delta_objects(self):
         for filename in (
             "clean.sh",
             "clean-index-artifacts.py",
             "configure-index.sh",
             "deploy.sh",
+            "init-env.sh",
             "run-clean-test.sh",
+            "run-perf.sh",
             "supply-data.sh",
             "test-fullscan.sh",
             "test-index.sh",
