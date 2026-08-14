@@ -248,7 +248,12 @@ bash bin/clean.sh all
 | `results` | benchmark JSON、矩阵和运行日志 | Catalog 表、Iceberg 数据、`metadata_location.txt`、provider/table 定位文件 | 复用供数数据重测 |
 | `all` | 当前测试表的 Catalog 记录、两种 producer 表目录、bootstrap metadata、运行状态 | `downloads/` 中的 SIFT1M 原始文件、环境配置 | 从 0 重新供数 |
 
-`index` 使用 `iceberg_catalog.drop_index` 更新 metadata head，再调用 `iceberg_catalog.vacuum_index` 回收可识别的索引文件。随后脚本校验当前 Registry 为空、文件大小/SHA-256/table UUID 和路径边界均正确，并删除维护接口跳过的残留 segment。最终索引目录只保留当前 metadata 引用的空 Registry。`all` 只删除 `MVP_WAREHOUSE_DIR` 下与当前 namespace/table 精确匹配的 Spark/PyIceberg 和 Rust 表目录，并删除当前表的 bootstrap 目录。
+`index` 使用 `iceberg_catalog.drop_index` 更新 metadata head，确认 Catalog 索引记录归零，
+再校验当前 Registry 为空、文件大小/SHA-256/table UUID 和路径边界均正确，并删除残留
+segment。当前 Registry v2 的 generation-aware GC 尚未启用，套件不调用
+`iceberg_catalog.vacuum_index`。最终索引目录只保留当前 metadata 引用的空 Registry。
+`all` 只删除 `MVP_WAREHOUSE_DIR` 下与当前 namespace/table 精确匹配的 Spark/PyIceberg
+和 Rust 表目录，并删除当前表的 bootstrap 目录。
 
 同一 SIFT1M 数据集在 schema、分区、压缩和 producer 版本保持一致时可持续复用。索引参数或 `nprobe` 变化只需要执行 `reuse`。供数布局或 producer 版本变化时执行 `fresh`。
 
