@@ -3,20 +3,29 @@
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-env_file="$root_dir/mvp.env"
-metadata_file="$root_dir/state/metadata_location.txt"
-if [[ ! -f "$env_file" || ! -f "$metadata_file" ]]; then
-  echo "ERROR: 需要 mvp.env 和 state/metadata_location.txt" >&2
+env_file="${MVP_ENV_FILE:-$root_dir/mvp.env}"
+if [[ ! -f "$env_file" ]]; then
+  echo "ERROR: 缺少 $env_file" >&2
   exit 1
 fi
 # shellcheck source=/dev/null
 source "$env_file"
+state_dir="${MVP_STATE_DIR:-$root_dir/state}"
+metadata_file="$state_dir/metadata_location.txt"
+if [[ ! -f "$metadata_file" ]]; then
+  echo "ERROR: 缺少 $metadata_file" >&2
+  exit 1
+fi
 
 namespace="${MVP_NAMESPACE:?MVP_NAMESPACE 未配置}"
 table="${MVP_TABLE:?MVP_TABLE 未配置}"
 vector_type="${MVP_VECTOR_TYPE:-floatvector}"
 warehouse_dir="${MVP_WAREHOUSE_DIR:?MVP_WAREHOUSE_DIR 未配置}"
 partition_buckets="${MVP_PARTITION_BUCKETS:-32}"
+dimension="${MVP_VECTOR_DIM:-128}"
+row_count="${MVP_ROW_COUNT:-1000000}"
+id_base="${MVP_ID_BASE:-1}"
+dataset="${MVP_DATASET:-sift1m}"
 metadata="$(head -1 "$metadata_file")"
 gsql_bin="${MVP_GSQL_BIN:-gsql}"
 db="${MVP_DB:-postgres}"
@@ -43,18 +52,29 @@ if [[ ! "$partition_buckets" =~ ^[0-9]+$ ]]; then
   echo "ERROR: MVP_PARTITION_BUCKETS 必须是非负整数: $partition_buckets" >&2
   exit 1
 fi
+for value in "$dimension" "$row_count"; do
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: 维度和行数必须是正整数: $value" >&2
+    exit 1
+  fi
+done
+if [[ "$id_base" != "0" && "$id_base" != "1" ]]; then
+  echo "ERROR: MVP_ID_BASE 仅支持 0 或 1" >&2
+  exit 1
+fi
 metadata_path="${metadata#file://}"
 if [[ ! -r "$metadata_path" ]]; then
   echo "ERROR: 当前用户不能读取 metadata: $metadata_path" >&2
   exit 1
 fi
 
-fixture_contract="$(python3 - "$metadata_path" "$partition_buckets" <<'PY'
+fixture_contract="$(python3 - "$metadata_path" "$partition_buckets" "$dimension" <<'PY'
 import json
 import sys
 
 metadata_path = sys.argv[1]
 partition_buckets = int(sys.argv[2])
+dimension = int(sys.argv[3])
 with open(metadata_path, "r", encoding="utf-8") as handle:
     metadata = json.load(handle)
 
@@ -64,10 +84,10 @@ if type(snapshot_id) is not int:
 
 properties = metadata.get("properties")
 audit_dim = properties.get("vector_dim.embedding") if isinstance(properties, dict) else None
-if audit_dim != "128":
+if audit_dim != str(dimension):
     raise SystemExit(
         "ERROR: fixture 要求字符串审计属性 "
-        f"vector_dim.embedding='128'，实际为 {audit_dim!r}"
+        f"vector_dim.embedding={str(dimension)!r}，实际为 {audit_dim!r}"
     )
 
 schemas = metadata.get("schemas") or [metadata.get("schema")]
@@ -101,9 +121,9 @@ if not (
     raise SystemExit("ERROR: fixture schema 要求 embedding list<float>")
 
 field_vector_dim = embedding.get("vector_dim")
-if field_vector_dim is not None and field_vector_dim not in (128, "128"):
+if field_vector_dim is not None and field_vector_dim not in (dimension, str(dimension)):
     raise SystemExit(
-        "ERROR: fixture embedding.vector_dim 存在时必须为 128，"
+        f"ERROR: fixture embedding.vector_dim 存在时必须为 {dimension}，"
         f"实际为 {field_vector_dim!r}"
     )
 field_dim_display = "<absent>" if field_vector_dim is None else str(field_vector_dim)
@@ -154,7 +174,7 @@ if [[ "$namespace_count" != "0" && "$namespace_count" != "1" ]]; then
   exit 1
 fi
 
-sql_file="$(mktemp /tmp/sift1m-attach.XXXXXX.sql)"
+sql_file="$(mktemp "/tmp/${dataset}-attach.XXXXXX.sql")"
 trap 'rm -f "$sql_file"' EXIT
 cat > "$sql_file" <<SQL
 \set ON_ERROR_STOP on
@@ -171,13 +191,13 @@ SELECT jsonb_typeof(iceberg_catalog.create_table(
   '$table',
   '{"type":"struct","fields":['
     '{"id":1,"name":"id","type":"long","required":true},'
-    '{"id":2,"name":"embedding","type":{"type":"list","element-id":3,"element":"float","element-required":true},"required":true,"vector_dim":128}'
+    '{"id":2,"name":"embedding","type":{"type":"list","element-id":3,"element":"float","element-required":true},"required":true,"vector_dim":$dimension}'
   ']}'::jsonb,
   '$bootstrap_uri'::text,
   NULL,
   NULL,
   FALSE,
-  '{"format-version":"2","vector_dim.embedding":"128"}'::jsonb
+  '{"format-version":"2","vector_dim.embedding":"$dimension"}'::jsonb
 )) AS create_result_type;
 
 UPDATE iceberg_catalog.tables_internal
@@ -195,23 +215,25 @@ SELECT count(*) AS row_count, min(id) AS min_id, max(id) AS max_id
 FROM $namespace.$table;
 SQL
 
-mkdir -p "$root_dir/state"
+mkdir -p "$state_dir"
 "$gsql_bin" -X -d "$db" -p "$port" -f "$sql_file" \
-  2>&1 | tee "$root_dir/state/register-table.log"
+  2>&1 | tee "$state_dir/register-table.log"
 
 actual="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -F '|' -c \
   "SELECT count(*), min(id), max(id) FROM $namespace.$table;" | tr -d '[:space:]')"
-if [[ "$actual" != "1000000|1|1000000" ]]; then
-  echo "ERROR: fixture 接入后数据校验失败，实际为 $actual，期望 1000000|1|1000000" >&2
+expected_max="$((id_base + row_count - 1))"
+expected_range="$row_count|$id_base|$expected_max"
+if [[ "$actual" != "$expected_range" ]]; then
+  echo "ERROR: fixture 接入后数据校验失败，实际为 $actual，期望 $expected_range" >&2
   exit 1
 fi
 
 actual_type="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
   "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid='$namespace.$table'::regclass AND attname='embedding' AND NOT attisdropped;" \
   | tr -d '[:space:]')"
-if [[ "$actual_type" != "vector(128)" && "$actual_type" != "floatvector(128)" ]]; then
-  echo "ERROR: embedding 类型为 ${actual_type:-<empty>}，期望 vector(128) 或 floatvector(128)" >&2
-  echo "ERROR: Catalog create_table 必须从字段级 vector_dim=128 创建向量列" >&2
+if [[ "$actual_type" != "vector($dimension)" && "$actual_type" != "floatvector($dimension)" ]]; then
+  echo "ERROR: embedding 类型为 ${actual_type:-<empty>}，期望 vector($dimension) 或 floatvector($dimension)" >&2
+  echo "ERROR: Catalog create_table 必须从字段级 vector_dim=$dimension 创建向量列" >&2
   exit 1
 fi
 
@@ -223,5 +245,5 @@ if [[ "$catalog_head" != "1|1|1" ]]; then
   exit 1
 fi
 
-printf '%s.%s\n' "$namespace" "$table" > "$root_dir/state/table.txt"
+printf '%s.%s\n' "$namespace" "$table" > "$state_dir/table.txt"
 echo "Fixture 接入完成，Catalog 向量类型、metadata、snapshot、relid 和数据范围均通过校验: $namespace.$table"

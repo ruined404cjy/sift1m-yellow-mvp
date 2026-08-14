@@ -118,14 +118,20 @@ class CleanIndexArtifactsTest(unittest.TestCase):
                 "partitions": [{"segments": [{"artifact_files": [{
                     "uri": artifact.as_uri(),
                     "size_bytes": artifact.stat().st_size,
-                }]}]}],
+                }], "algorithm_details": {
+                    "dimension": 960,
+                    "num_clusters": 1024,
+                    "num_sub_quantizers": 60,
+                    "nbits": 8,
+                }}]}],
             }]
             metadata, _, _ = self.make_fixture(Path(directory), indexes)
-            implementation, artifacts = CLEANER.verify_active_artifact(
-                metadata.as_uri(), "idx_pq", "ivf_pq"
+            implementation, artifacts, details = CLEANER.verify_active_artifact(
+                metadata.as_uri(), "idx_pq", "ivf_pq", 960, 60, 8
             )
             self.assertEqual(implementation, "builtin.ivf_pq@1")
             self.assertEqual(artifacts, [artifact.resolve()])
+            self.assertEqual(details[0]["num_sub_quantizers"], 60)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,13 @@ class PyIcebergProviderTest(unittest.TestCase):
         with self.assertRaises(EOFError):
             PROVIDER.read_fvecs_batch(BytesIO(b"\x80\x00\x00\x00"), 1, 1)
 
+    def test_reads_960_dimension_batch_with_zero_based_or_one_based_ids(self):
+        record = struct.pack("<i960f", 960, *range(960))
+        ids, values = PROVIDER.read_fvecs_batch(BytesIO(record), 1, 1, 960)
+        self.assertEqual(ids, [1])
+        self.assertEqual(len(values), 960 * 4)
+        self.assertEqual(struct.unpack_from("<f", values, 959 * 4)[0], 959.0)
+
     def test_validates_vector_property_and_partition(self):
         metadata = {
             "format-version": 2,
@@ -77,6 +84,11 @@ class PyIcebergProviderTest(unittest.TestCase):
             path.write_text(json.dumps(metadata), encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 PROVIDER.validate_metadata(path, 32)
+
+            metadata["properties"]["vector_dim.embedding"] = "960"
+            path.write_text(json.dumps(metadata), encoding="utf-8")
+            validated = PROVIDER.validate_metadata(path, 32, 960)
+            self.assertEqual(validated["properties"]["vector_dim.embedding"], "960")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SIFT1M SQL Recall/延迟 MVP；所有测量查询复用一个 gsql 会话。"""
+"""fvecs/ivecs 数据集的 SQL Recall 与延迟测试；查询复用一个 gsql 会话。"""
 
 from __future__ import annotations
 
@@ -19,8 +19,9 @@ from typing import Iterable, Sequence
 
 IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 TIME_RE = re.compile(r"^Time:\s+([0-9]+(?:\.[0-9]+)?)\s+ms\s*$")
-QUERY_RECORD_BYTES = 4 + 128 * 4
-GT_RECORD_BYTES = 4 + 100 * 4
+DEFAULT_DIMENSION = 128
+DEFAULT_GT_WIDTH = 100
+DEFAULT_QUERY_COUNT = 10_000
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -39,6 +40,12 @@ def read_env_file(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip("'\"")
     return values
+
+
+def config_path(root_dir: Path, value: str, default: str) -> Path:
+    """将配置中的相对数据文件路径按套件根目录解析。"""
+    path = Path(value or default).expanduser()
+    return path if path.is_absolute() else root_dir / path
 
 
 def select_query_indices(total: int, count: int, sampling: str) -> list[int]:
@@ -62,39 +69,49 @@ def record_count(path: Path, record_bytes: int, label: str) -> int:
     return size // record_bytes
 
 
-def read_fvecs(path: Path, indices: Sequence[int]) -> list[list[float]]:
-    """按指定序号读取 128 维 little-endian fvecs。"""
+def read_fvecs(
+    path: Path, indices: Sequence[int], dimension: int = DEFAULT_DIMENSION
+) -> list[list[float]]:
+    """按指定序号读取定长 little-endian fvecs。"""
     result: list[list[float]] = []
+    record_bytes = 4 + dimension * 4
     with path.open("rb") as handle:
         for index in indices:
-            handle.seek(index * QUERY_RECORD_BYTES)
-            raw = handle.read(QUERY_RECORD_BYTES)
-            if len(raw) != QUERY_RECORD_BYTES:
+            handle.seek(index * record_bytes)
+            raw = handle.read(record_bytes)
+            if len(raw) != record_bytes:
                 raise EOFError(f"{path} 不含 query {index}")
-            dimension = struct.unpack_from("<i", raw, 0)[0]
-            if dimension != 128:
-                raise ValueError(f"query {index} 维度为 {dimension}，期望 128")
-            result.append(list(struct.unpack_from("<128f", raw, 4)))
+            actual_dimension = struct.unpack_from("<i", raw, 0)[0]
+            if actual_dimension != dimension:
+                raise ValueError(
+                    f"query {index} 维度为 {actual_dimension}，期望 {dimension}"
+                )
+            result.append(list(struct.unpack_from(f"<{dimension}f", raw, 4)))
     return result
 
 
 def read_ivecs(
-    path: Path, indices: Sequence[int], k: int, id_base: int
+    path: Path,
+    indices: Sequence[int],
+    k: int,
+    id_base: int,
+    gt_width: int = DEFAULT_GT_WIDTH,
 ) -> list[list[int]]:
-    """按指定 query 序号读取 top-100 ivecs，并按表 ID 基数修正。"""
+    """按指定 query 序号读取定宽 ivecs，并按表 ID 基数修正。"""
     result: list[list[int]] = []
+    record_bytes = 4 + gt_width * 4
     with path.open("rb") as handle:
         for index in indices:
-            handle.seek(index * GT_RECORD_BYTES)
-            raw = handle.read(GT_RECORD_BYTES)
-            if len(raw) != GT_RECORD_BYTES:
+            handle.seek(index * record_bytes)
+            raw = handle.read(record_bytes)
+            if len(raw) != record_bytes:
                 raise EOFError(f"{path} 不含 ground truth {index}")
             dimension = struct.unpack_from("<i", raw, 0)[0]
-            if dimension != 100:
+            if dimension != gt_width:
                 raise ValueError(
-                    f"ground truth {index} 宽度为 {dimension}，期望 100"
+                    f"ground truth {index} 宽度为 {dimension}，期望 {gt_width}"
                 )
-            values = struct.unpack_from("<100i", raw, 4)
+            values = struct.unpack_from(f"<{gt_width}i", raw, 4)
             result.append([value + id_base for value in values[:k]])
     return result
 
@@ -104,21 +121,26 @@ def base_vector(
     row_id: int,
     id_base: int,
     cache: dict[int, tuple[float, ...]],
+    dimension: int = DEFAULT_DIMENSION,
+    row_count: int = 1_000_000,
 ) -> tuple[float, ...]:
     """按稳定 ID 随机读取一条 base vector，并缓存 Recall 复算所需行。"""
     if row_id in cache:
         return cache[row_id]
     ordinal = row_id - id_base
-    if not 0 <= ordinal < 1_000_000:
+    if not 0 <= ordinal < row_count:
         raise ValueError(f"查询返回了范围外 ID: {row_id}")
-    handle.seek(ordinal * QUERY_RECORD_BYTES)
-    raw = handle.read(QUERY_RECORD_BYTES)
-    if len(raw) != QUERY_RECORD_BYTES:
+    record_bytes = 4 + dimension * 4
+    handle.seek(ordinal * record_bytes)
+    raw = handle.read(record_bytes)
+    if len(raw) != record_bytes:
         raise EOFError(f"base 文件中找不到 ID {row_id}")
-    dimension = struct.unpack_from("<i", raw, 0)[0]
-    if dimension != 128:
-        raise ValueError(f"base ID {row_id} 的维度为 {dimension}")
-    value = struct.unpack_from("<128f", raw, 4)
+    actual_dimension = struct.unpack_from("<i", raw, 0)[0]
+    if actual_dimension != dimension:
+        raise ValueError(
+            f"base ID {row_id} 的维度为 {actual_dimension}，期望 {dimension}"
+        )
+    value = struct.unpack_from(f"<{dimension}f", raw, 4)
     cache[row_id] = value
     return value
 
@@ -292,7 +314,13 @@ def parse_gsql_output(output: str, query_count: int) -> tuple[list[list[int]], l
 
 def main() -> None:
     root_dir = Path(__file__).resolve().parent.parent
-    config = read_env_file(root_dir / "mvp.env")
+    env_file = Path(os.environ.get("MVP_ENV_FILE", root_dir / "mvp.env"))
+    config = read_env_file(env_file)
+    dimension = int(config.get("MVP_VECTOR_DIM", str(DEFAULT_DIMENSION)))
+    row_count = int(config.get("MVP_ROW_COUNT", "1000000"))
+    gt_width = int(config.get("MVP_GT_K", str(DEFAULT_GT_WIDTH)))
+    query_count = int(config.get("MVP_QUERY_COUNT", str(DEFAULT_QUERY_COUNT)))
+    dataset = config.get("MVP_DATASET", "sift1m")
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", required=True, choices=("index", "fullscan"))
@@ -319,12 +347,24 @@ def main() -> None:
     parser.add_argument("--vector-cast", default=config.get("MVP_VECTOR_TYPE", "floatvector"))
     parser.add_argument("--id-base", type=int, choices=(0, 1),
                         default=int(config.get("MVP_ID_BASE", "1")))
+    parser.add_argument("--dimension", type=int, default=dimension)
+    parser.add_argument("--row-count", type=int, default=row_count)
+    parser.add_argument("--gt-width", type=int, default=gt_width)
+    parser.add_argument("--query-count", type=int, default=query_count)
+    parser.add_argument("--dataset", default=dataset)
+    parser.add_argument(
+        "--recall-source",
+        default=config.get("MVP_RECALL_SOURCE", "official_sift_groundtruth"),
+    )
     parser.add_argument("--query-file", type=Path,
-                        default=root_dir / "downloads/sift_query.fvecs")
+                        default=config_path(root_dir, config.get("MVP_QUERY_FILE", ""),
+                                            "downloads/sift_query.fvecs"))
     parser.add_argument("--groundtruth-file", type=Path,
-                        default=root_dir / "downloads/sift_groundtruth.ivecs")
+                        default=config_path(root_dir, config.get("MVP_GROUNDTRUTH_FILE", ""),
+                                            "downloads/sift_groundtruth.ivecs"))
     parser.add_argument("--base-file", type=Path,
-                        default=root_dir / "downloads/sift_base.fvecs")
+                        default=config_path(root_dir, config.get("MVP_BASE_FILE", ""),
+                                            "downloads/sift_base.fvecs"))
     parser.add_argument("--gsql", default=config.get("MVP_GSQL_BIN", "gsql"))
     parser.add_argument("--database", default=config.get("MVP_DB", "postgres"))
     parser.add_argument("--port", type=int, default=int(config.get("MVP_PORT", "37000")))
@@ -334,12 +374,21 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    if not 1 <= args.nq <= 10_000:
-        raise ValueError("nq 必须在 1..10000 范围内")
+    if any(value < 1 for value in (
+        args.dimension, args.row_count, args.gt_width, args.query_count
+    )):
+        raise ValueError(
+            "dimension、row-count、gt-width 和 query-count 必须大于 0"
+        )
+    if args.nq < 1:
+        raise ValueError("nq 必须大于 0")
     if not 1 <= args.k <= 10_000:
         raise ValueError("k 必须在 1..10000 范围内")
-    if args.k > 100 and not args.skip_recall:
-        raise ValueError("SIFT 官方 GT 仅含 top-100；k>100 必须使用 --skip-recall")
+    if args.k > args.gt_width and not args.skip_recall:
+        raise ValueError(
+            f"{args.dataset} 官方 GT 仅含 top-{args.gt_width}；"
+            "更大的 k 必须使用 --skip-recall"
+        )
     if args.warmup < 0 or args.nprobe < 1 or args.query_dop < 1:
         raise ValueError("warmup 不能小于 0，nprobe 和 query-dop 必须大于 0")
     for value, label in (
@@ -352,22 +401,32 @@ def main() -> None:
         validate_identifier(value, label)
 
     table_name = f"{args.namespace}.{args.table}"
-    total_queries = record_count(args.query_file, QUERY_RECORD_BYTES, "query")
+    query_record_bytes = 4 + args.dimension * 4
+    gt_record_bytes = 4 + args.gt_width * 4
+    total_queries = record_count(args.query_file, query_record_bytes, "query")
+    if total_queries != args.query_count:
+        raise ValueError(
+            f"{args.dataset} query 记录数为 {total_queries}，期望 {args.query_count}"
+        )
     query_indices = select_query_indices(
         total_queries, args.nq, args.query_sampling
     )
-    queries = read_fvecs(args.query_file, query_indices)
+    queries = read_fvecs(args.query_file, query_indices, args.dimension)
     groundtruth = None
     if not args.skip_recall:
         groundtruth_count = record_count(
-            args.groundtruth_file, GT_RECORD_BYTES, "ground truth"
+            args.groundtruth_file, gt_record_bytes, "ground truth"
         )
         if groundtruth_count != total_queries:
             raise ValueError(
                 f"query/ground truth 记录数不一致: {total_queries}/{groundtruth_count}"
             )
         groundtruth = read_ivecs(
-            args.groundtruth_file, query_indices, args.k, args.id_base
+            args.groundtruth_file,
+            query_indices,
+            args.k,
+            args.id_base,
+            args.gt_width,
         )
     if args.mode == "index":
         configure_nprobe(args, table_name)
@@ -384,7 +443,8 @@ def main() -> None:
 
     sql = generate_sql(args, queries, table_name)
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", prefix="sift1m-bench-", suffix=".sql", delete=False
+        mode="w", encoding="utf-8", prefix=f"{args.dataset}-bench-",
+        suffix=".sql", delete=False
     ) as handle:
         handle.write(sql)
         sql_path = Path(handle.name)
@@ -432,13 +492,25 @@ def main() -> None:
                 total_id_hits += id_hits
 
                 kth_vector = base_vector(
-                    base_handle, expected[-1], args.id_base, vector_cache
+                    base_handle,
+                    expected[-1],
+                    args.id_base,
+                    vector_cache,
+                    args.dimension,
+                    args.row_count,
                 )
                 distance_threshold = euclidean_distance(query, kth_vector) + 1e-3
                 distance_hits = sum(
                     euclidean_distance(
                         query,
-                        base_vector(base_handle, row_id, args.id_base, vector_cache),
+                        base_vector(
+                            base_handle,
+                            row_id,
+                            args.id_base,
+                            vector_cache,
+                            args.dimension,
+                            args.row_count,
+                        ),
                     ) <= distance_threshold
                     for row_id in returned
                 )
@@ -458,6 +530,10 @@ def main() -> None:
     )
     summary = {
         "format_version": 1,
+        "dataset": args.dataset,
+        "dimension": args.dimension,
+        "row_count": args.row_count,
+        "available_query_count": total_queries,
         "mode": args.mode,
         "table": table_name,
         "vector_cast": args.vector_cast,
@@ -468,7 +544,7 @@ def main() -> None:
         "id_base": args.id_base,
         "nprobe": args.nprobe if args.mode == "index" else None,
         "query_dop": args.query_dop,
-        "recall_source": None if groundtruth is None else "official_sift_groundtruth",
+        "recall_source": None if groundtruth is None else args.recall_source,
         "warmup_queries": min(args.warmup, args.nq),
         "recall_at_k_id": id_recall,
         "recall_at_k_distance_threshold": distance_recall,

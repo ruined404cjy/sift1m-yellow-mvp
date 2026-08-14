@@ -130,8 +130,13 @@ def clean_residual_artifacts(metadata_uri: str) -> tuple[Optional[Path], list[Pa
 
 
 def verify_active_artifact(
-    metadata_uri: str, index_name: str, index_type: str
-) -> tuple[str, list[Path]]:
+    metadata_uri: str,
+    index_name: str,
+    index_type: str,
+    expected_dimension: Optional[int] = None,
+    expected_num_sub_quantizers: Optional[int] = None,
+    expected_nbits: Optional[int] = None,
+) -> tuple[str, list[Path], list[dict]]:
     """校验活动向量索引的 canonical implementation 和落盘 artifact。"""
     try:
         expected_implementation, expected_prefix = INDEX_CONTRACTS[index_type]
@@ -175,8 +180,32 @@ def verify_active_artifact(
         raise ValueError(f"Registry 索引状态为 {entry.get('state')!r}，期望 active")
 
     artifacts: list[Path] = []
+    algorithm_details: list[dict] = []
     for partition in entry.get("partitions", []):
         for segment in partition.get("segments", []):
+            details = segment.get("algorithm_details")
+            if not isinstance(details, dict):
+                raise ValueError("Registry segment 缺少 algorithm_details")
+            if expected_dimension is not None and details.get("dimension") != expected_dimension:
+                raise ValueError(
+                    f"algorithm_details dimension={details.get('dimension')!r}，"
+                    f"期望 {expected_dimension}"
+                )
+            if (
+                expected_num_sub_quantizers is not None
+                and details.get("num_sub_quantizers") != expected_num_sub_quantizers
+            ):
+                raise ValueError(
+                    "algorithm_details num_sub_quantizers="
+                    f"{details.get('num_sub_quantizers')!r}，"
+                    f"期望 {expected_num_sub_quantizers}"
+                )
+            if expected_nbits is not None and details.get("nbits") != expected_nbits:
+                raise ValueError(
+                    f"algorithm_details nbits={details.get('nbits')!r}，"
+                    f"期望 {expected_nbits}"
+                )
+            algorithm_details.append(details)
             for artifact in segment.get("artifact_files", []):
                 path = local_path(artifact["uri"])
                 path.relative_to(table_root / "indices")
@@ -191,7 +220,7 @@ def verify_active_artifact(
                 artifacts.append(path)
     if not artifacts:
         raise ValueError(f"Registry 索引 {index_name} 没有 artifact_files")
-    return implementation, artifacts
+    return implementation, artifacts, algorithm_details
 
 
 def main() -> None:
@@ -199,15 +228,30 @@ def main() -> None:
     parser.add_argument("--metadata-location", required=True)
     parser.add_argument("--expect-index-name")
     parser.add_argument("--expect-index-type", choices=sorted(INDEX_CONTRACTS))
+    parser.add_argument("--expect-dimension", type=int)
+    parser.add_argument("--expect-num-sub-quantizers", type=int)
+    parser.add_argument("--expect-nbits", type=int)
     args = parser.parse_args()
     if args.expect_index_name or args.expect_index_type:
         if not args.expect_index_name or not args.expect_index_type:
             parser.error("--expect-index-name 和 --expect-index-type 必须同时提供")
-        implementation, artifacts = verify_active_artifact(
-            args.metadata_location, args.expect_index_name, args.expect_index_type
+        implementation, artifacts, details = verify_active_artifact(
+            args.metadata_location,
+            args.expect_index_name,
+            args.expect_index_type,
+            args.expect_dimension,
+            args.expect_num_sub_quantizers,
+            args.expect_nbits,
         )
         print(f"Registry implementation: {implementation}")
         print(f"索引 artifact 文件数: {len(artifacts)}")
+        unique_details = sorted({
+            json.dumps(item, ensure_ascii=False, sort_keys=True)
+            for item in details
+        })
+        print(f"Registry algorithm_details 种类数: {len(unique_details)}")
+        for item in unique_details:
+            print(f"Registry algorithm_details: {item}")
     else:
         registry_path, removed = clean_residual_artifacts(args.metadata_location)
         if registry_path is None:

@@ -3,23 +3,34 @@
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="${MVP_ENV_FILE:-$root_dir/mvp.env}"
 provider="${1:-}"
+if [[ ! -f "$env_file" ]]; then
+  echo "ERROR: 缺少 $env_file" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$env_file"
+dataset="${MVP_DATASET:-sift1m}"
 
-case "$provider" in
-  spark)
+case "$dataset:$provider" in
+  sift1m:spark)
     script=seed-sift1m.sh
     ;;
-  pyiceberg)
+  sift1m:pyiceberg)
     script=seed-sift1m-pyiceberg.sh
     ;;
-  rust)
+  sift1m:rust)
     script=seed-sift1m-rust.sh
     ;;
+  gist1m:pyiceberg)
+    script=seed-gist1m-pyiceberg.sh
+    ;;
   *)
-    echo "Usage: bash bin/supply-data.sh <spark|pyiceberg|rust>" >&2
+    echo "ERROR: $dataset 不支持供数路径 $provider" >&2
     exit 2
     ;;
 esac
 
-echo "开始供数: $provider"
+echo "开始供数: dataset=$dataset, provider=$provider"
 bash "$root_dir/bin/$script"

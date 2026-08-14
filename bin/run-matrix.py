@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""执行 SIFT1M 的 K×DOP×扫描模式矩阵并汇总 JSON。"""
+"""执行当前数据集的 K×DOP×扫描模式矩阵并汇总 JSON。"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -40,7 +41,8 @@ def read_env_file(path: Path) -> dict[str, str]:
 
 def main() -> None:
     root_dir = Path(__file__).resolve().parent.parent
-    config = read_env_file(root_dir / "mvp.env")
+    env_file = Path(os.environ.get("MVP_ENV_FILE", root_dir / "mvp.env"))
+    config = read_env_file(env_file)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--k", default=config.get("MVP_MATRIX_K", "10,100,1000,10000")
@@ -67,6 +69,7 @@ def main() -> None:
     parser.add_argument("--allow-serial-fallback", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=root_dir / "state/matrix")
     args = parser.parse_args()
+    gt_width = int(config.get("MVP_GT_K", "100"))
 
     ks = csv_ints(args.k, "k")
     dops = csv_ints(args.dop, "dop")
@@ -95,7 +98,7 @@ def main() -> None:
                         "--query-dop", str(dop),
                         "--output", str(output),
                     ]
-                    if k > 100:
+                    if k > gt_width:
                         command.append("--skip-recall")
                     if dop > 1 and not args.allow_serial_fallback:
                         command.append("--require-parallel-plan")
@@ -112,6 +115,7 @@ def main() -> None:
 
     summary = {
         "format_version": 1,
+        "dataset": config.get("MVP_DATASET", "sift1m"),
         "k_values": ks,
         "dop_values": dops,
         "modes": modes,

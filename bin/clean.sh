@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-env_file="$root_dir/mvp.env"
+env_file="${MVP_ENV_FILE:-$root_dir/mvp.env}"
 level="${1:-}"
 if [[ ! -f "$env_file" ]]; then
   echo "ERROR: 缺少 $env_file" >&2
@@ -11,6 +11,8 @@ if [[ ! -f "$env_file" ]]; then
 fi
 # shellcheck source=/dev/null
 source "$env_file"
+dataset="${MVP_DATASET:-sift1m}"
+state_dir="${MVP_STATE_DIR:-$root_dir/state}"
 
 case "$level" in
   index|results|all) ;;
@@ -38,6 +40,10 @@ if [[ "$warehouse_dir" != /* || "$warehouse_dir" == "/" ]]; then
   exit 1
 fi
 warehouse_dir="${warehouse_dir%/}"
+if [[ "$state_dir" != "$root_dir/state" && "$state_dir" != "$root_dir/state/"* ]]; then
+  echo "ERROR: MVP_STATE_DIR 必须位于 $root_dir/state 下: $state_dir" >&2
+  exit 1
+fi
 
 catalog_count=""
 load_catalog_state() {
@@ -107,8 +113,8 @@ clean_indexes() {
 }
 
 clean_results() {
-  mkdir -p "$root_dir/state"
-  find "$root_dir/state" -mindepth 1 -depth \
+  mkdir -p "$state_dir"
+  find "$state_dir" -mindepth 1 -depth \
     ! -name .gitkeep \
     ! -name metadata_location.txt \
     ! -name provider.txt \
@@ -153,9 +159,10 @@ clean_all() {
   bootstrap_root="${bootstrap_root%/}"
   delete_table_tree "$bootstrap_root" "$bootstrap_root/$namespace/$table"
 
-  find "$root_dir/state" -mindepth 1 -depth ! -name .gitkeep -delete
+  mkdir -p "$state_dir"
+  find "$state_dir" -mindepth 1 -depth ! -name .gitkeep -delete
   echo "Catalog 表、producer 表目录、bootstrap metadata 和运行状态已清理。"
-  echo "SIFT1M 原始文件保留在 $root_dir/downloads。"
+  echo "$dataset 原始文件保留在 $root_dir/downloads。"
 }
 
 case "$level" in

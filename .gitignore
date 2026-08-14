@@ -1,8 +1,11 @@
 /downloads/*.fvecs
 /downloads/*.ivecs
+/downloads/gist.tar.gz
+/downloads/.cache/
 /state/*
 !/state/.gitkeep
 /mvp.env
+/gist.env
 /.venv/
 /wheelhouse/*.whl
 /wheelhouse/SHA256SUMS

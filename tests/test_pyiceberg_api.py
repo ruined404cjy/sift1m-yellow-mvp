@@ -94,6 +94,21 @@ class PyIcebergApiTest(unittest.TestCase):
             self.assertEqual(metadata["properties"]["vector_dim.embedding"], "128")
             self.assertTrue(list((root / "warehouse/ns/t").rglob("*.parquet")))
 
+    def test_build_arrow_table_supports_gist_dimension(self):
+        import pyarrow as pa
+
+        arrow_schema = pa.schema([
+            pa.field("id", pa.int64(), nullable=False),
+            pa.field("embedding", pa.list_(pa.float32()), nullable=False),
+        ])
+        raw = struct.pack("<i960f", 960, *range(960))
+        ids, values = PROVIDER.read_fvecs_batch(BytesIO(raw), 1, 1, 960)
+        table = PROVIDER.build_arrow_table(ids, values, arrow_schema, 960)
+
+        self.assertEqual(table.num_rows, 1)
+        self.assertEqual(len(table.column("embedding")[0].as_py()), 960)
+        self.assertEqual(table.column("embedding")[0].as_py()[-1], 959.0)
+
 
 if __name__ == "__main__":
     unittest.main()

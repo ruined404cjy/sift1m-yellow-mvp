@@ -54,6 +54,27 @@ class BinaryReaderTest(unittest.TestCase):
             self.assertEqual(vectors[1][-1], 1127.0)
             self.assertEqual(neighbors[1], list(range(1001, 1011)))
 
+    def test_gist_dimension_uses_the_same_binary_reader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / "gist_base.fvecs"
+            query = root / "gist_query.fvecs"
+            groundtruth = root / "gist_groundtruth.ivecs"
+            vector = list(range(960))
+            base.write_bytes(struct.pack("<i960f", 960, *vector))
+            query.write_bytes(struct.pack("<i960f", 960, *vector))
+            groundtruth.write_bytes(struct.pack("<i100i", 100, *range(100)))
+
+            vectors = BENCHMARK.read_fvecs(query, [0], 960)
+            neighbors = BENCHMARK.read_ivecs(groundtruth, [0], 100, 1, 100)
+            with base.open("rb") as handle:
+                loaded = BENCHMARK.base_vector(handle, 1, 1, {}, 960, 1)
+
+            self.assertEqual(len(vectors[0]), 960)
+            self.assertEqual(vectors[0][-1], 959.0)
+            self.assertEqual(neighbors[0], list(range(1, 101)))
+            self.assertEqual(loaded[-1], 959.0)
+
     def test_equidistant_sampling_uses_matching_query_and_groundtruth_indices(self):
         indices = BENCHMARK.select_query_indices(10_000, 100, "equidistant")
         self.assertEqual(indices, list(range(0, 10_000, 101)))

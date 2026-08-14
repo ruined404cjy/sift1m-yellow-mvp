@@ -85,11 +85,7 @@ fi
 
 echo "请核对 mvp.env 中的 producer、GAUSSHOME/gsql、warehouse、namespace 和 table。"
 if [[ -n "$provider" ]]; then
-  if [[ "$env_file" != "$root_dir/mvp.env" ]]; then
-    echo "MVP_ENV_FILE 仅用于配置初始化测试；preflight 使用包根目录 mvp.env。"
-    exit 0
-  fi
-  bash "$root_dir/bin/preflight.sh" "$provider"
+  MVP_ENV_FILE="$env_file" bash "$root_dir/bin/preflight.sh" "$provider"
 else
   echo "环境检查: bash bin/preflight.sh <spark|pyiceberg|rust|all>"
 fi

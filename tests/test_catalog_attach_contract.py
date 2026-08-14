@@ -13,7 +13,8 @@ SCRIPT = (
 class CatalogAttachContractTest(unittest.TestCase):
     def test_uses_catalog_create_then_metadata_switch(self):
         self.assertIn("iceberg_catalog.create_table(", SCRIPT)
-        self.assertIn('"vector_dim":128', SCRIPT)
+        self.assertIn('dimension="${MVP_VECTOR_DIM:-128}"', SCRIPT)
+        self.assertIn('"vector_dim":$dimension', SCRIPT)
         self.assertIn("SET metadata_location=", SCRIPT)
         self.assertIn("current_snapshot_id=", SCRIPT)
 
