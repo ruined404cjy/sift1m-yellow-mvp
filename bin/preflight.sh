@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-env_file="$root_dir/mvp.env"
+env_file="${MVP_ENV_FILE:-$root_dir/mvp.env}"
 if [[ ! -f "$env_file" ]]; then
   echo "ERROR: 请先复制 config/mvp.env.example 为 mvp.env 并修改" >&2
   exit 1
@@ -12,16 +12,29 @@ fi
 source "$env_file"
 
 provider="${1:-all}"
+dataset="${MVP_DATASET:-sift1m}"
+state_dir="${MVP_STATE_DIR:-$root_dir/state}"
 if [[ "$provider" != "all" && "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" ]]; then
   echo "Usage: bash bin/preflight.sh [all|spark|pyiceberg|rust]" >&2
   exit 2
 fi
 
-mkdir -p "$root_dir/state"
-exec > >(tee "$root_dir/state/preflight.log") 2>&1
+mkdir -p "$state_dir"
+exec > >(tee "$state_dir/preflight.log") 2>&1
 
 : "${MVP_WAREHOUSE_DIR:?MVP_WAREHOUSE_DIR 未配置}"
-bash "$root_dir/bin/verify-sift1m.sh"
+if [[ "$MVP_WAREHOUSE_DIR" != /* || "$MVP_WAREHOUSE_DIR" == "/" ]]; then
+  echo "ERROR: MVP_WAREHOUSE_DIR 必须是非根目录的裸绝对路径" >&2
+  exit 1
+fi
+case "$dataset" in
+  sift1m) bash "$root_dir/bin/verify-sift1m.sh" ;;
+  gist1m) bash "$root_dir/bin/verify-gist1m.sh" ;;
+  *)
+    echo "ERROR: 不支持的数据集: $dataset" >&2
+    exit 1
+    ;;
+esac
 
 if [[ "$(uname -m)" != "aarch64" && "${MVP_ALLOW_NON_AARCH64:-0}" != "1" ]]; then
   echo "ERROR: 当前架构为 $(uname -m)，本 MVP 的目标架构是 aarch64" >&2
@@ -32,11 +45,30 @@ if [[ "$(uname -m)" != "aarch64" ]]; then
   echo "WARN: 已启用非 aarch64 蓝区验证开关，结果不代表黄区 ARM 性能" >&2
 fi
 echo "架构: $(uname -m)"
+echo "数据集: $dataset"
 
 if [[ -r /etc/euleros-release ]]; then
   echo "系统: $(cat /etc/euleros-release)"
 elif [[ -r /etc/os-release ]]; then
   grep -E '^(NAME|VERSION)=' /etc/os-release || true
+fi
+
+echo "CPU/NUMA/内存摘要:"
+if command -v lscpu >/dev/null 2>&1; then
+  lscpu | grep -E '^(Architecture|CPU\(s\)|Thread|Core|Socket|NUMA node\(s\)|NUMA node[0-9]+ CPU\(s\)):' || true
+fi
+if command -v free >/dev/null 2>&1; then
+  free -h
+fi
+echo "进程资源上限: open_files=$(ulimit -n), max_user_processes=$(ulimit -u)"
+echo "Warehouse 存储摘要:"
+warehouse_probe="$MVP_WAREHOUSE_DIR"
+while [[ ! -e "$warehouse_probe" && "$warehouse_probe" != "/" ]]; do
+  warehouse_probe="$(dirname -- "$warehouse_probe")"
+done
+df -hT "$warehouse_probe"
+if command -v lsblk >/dev/null 2>&1; then
+  lsblk -o NAME,ROTA,TYPE,SIZE,FSTYPE,MOUNTPOINTS || true
 fi
 
 for command_name in python3 sha256sum stat; do
@@ -110,10 +142,6 @@ if [[ "$provider" == "all" || "$provider" == "rust" ]]; then
   git -C "$MVP_BRIDGE_SOURCE" rev-parse HEAD 2>/dev/null || true
 fi
 
-if [[ "$MVP_WAREHOUSE_DIR" != /* ]]; then
-  echo "ERROR: MVP_WAREHOUSE_DIR 必须是裸绝对路径，不能使用相对路径或 file://" >&2
-  exit 1
-fi
 mkdir -p "$MVP_WAREHOUSE_DIR"
 if [[ ! -w "$MVP_WAREHOUSE_DIR" ]]; then
   echo "ERROR: warehouse 不可写: $MVP_WAREHOUSE_DIR" >&2
@@ -131,6 +159,9 @@ sed -n '1p' <<< "$gsql_version"
 "$gsql_bin" -X -d "${MVP_DB:-postgres}" -p "${MVP_PORT:-37000}" \
   -t -A -c 'SELECT 1;' >/dev/null
 echo "数据库连接: OK"
+echo "数据库性能参数:"
+"$gsql_bin" -X -d "${MVP_DB:-postgres}" -p "${MVP_PORT:-37000}" -t -A -F '|' -c \
+  "SELECT name, setting, unit FROM pg_settings WHERE name IN ('max_process_memory','shared_buffers','work_mem','enable_thread_pool','thread_pool_attr','enable_dynamic_workload','use_workload_manager') ORDER BY name;" || true
 echo "Catalog C 函数实际绑定:"
 "$gsql_bin" -X -d "${MVP_DB:-postgres}" -p "${MVP_PORT:-37000}" \
   -c "SELECT p.proname, p.probin FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='iceberg_catalog' AND p.proname='create_table';"
@@ -161,4 +192,4 @@ else
 fi
 
 echo "前置检查通过。"
-echo "预检记录: $root_dir/state/preflight.log"
+echo "预检记录: $state_dir/preflight.log"

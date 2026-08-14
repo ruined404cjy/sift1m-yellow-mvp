@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-env_file="$root_dir/mvp.env"
+env_file="${MVP_ENV_FILE:-$root_dir/mvp.env}"
 profile="${1:-}"
 scope="${2:-quick}"
 if [[ ! -f "$env_file" ]]; then
@@ -12,6 +12,7 @@ if [[ ! -f "$env_file" ]]; then
 fi
 # shellcheck source=/dev/null
 source "$env_file"
+state_dir="${MVP_STATE_DIR:-$root_dir/state}"
 
 case "$profile" in
   pq)
@@ -30,11 +31,11 @@ esac
 case "$scope" in
   quick)
     test_nq="${MVP_TEST_NQ:-100}"
-    output="$root_dir/state/index-$profile.json"
+    output="$state_dir/index-$profile.json"
     ;;
   recall)
     test_nq="${MVP_RECALL_NQ:-10000}"
-    output="$root_dir/state/index-$profile-recall.json"
+    output="$state_dir/index-$profile-recall.json"
     ;;
   *)
     echo "Usage: bash bin/test-index.sh <pq|flat> [quick|recall]" >&2
@@ -68,7 +69,7 @@ if [[ "$actual" != "$expected_type|$expected_implementation|active" ]]; then
   exit 1
 fi
 
-mkdir -p "$root_dir/state"
+mkdir -p "$state_dir"
 python3 "$root_dir/bin/benchmark.py" \
   --mode index \
   --query-dop 1 \

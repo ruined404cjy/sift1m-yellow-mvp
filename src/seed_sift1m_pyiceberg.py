@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""使用隔离 PyIceberg 环境流式写入 SIFT1M，并输出最新 metadata location。"""
+"""使用隔离 PyIceberg 环境流式写入定长 fvecs，并输出 metadata location。"""
 
 from __future__ import annotations
 
@@ -14,9 +14,7 @@ from urllib.parse import urlparse
 
 
 DIMENSION = 128
-RECORD_BYTES = 4 + DIMENSION * 4
 EXPECTED_ROWS = 1_000_000
-EXPECTED_BYTES = EXPECTED_ROWS * RECORD_BYTES
 IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 VECTOR_DIM_PROPERTY = "vector_dim.embedding"
 
@@ -38,36 +36,43 @@ def validate_identifier(value: str, label: str) -> None:
         raise ValueError(f"{label} 仅支持小写字母、数字和下划线: {value}")
 
 
-def read_fvecs_batch(handle, first_id: int, max_rows: int) -> tuple[list[int], bytearray]:
-    """读取一批 SIFT fvecs，返回一基 ID 和连续 little-endian float32 数据。"""
+def read_fvecs_batch(
+    handle, first_id: int, max_rows: int, dimension: int = DIMENSION
+) -> tuple[list[int], bytearray]:
+    """读取一批 fvecs，返回连续 ID 和 little-endian float32 数据。"""
     ids: list[int] = []
     values = bytearray()
+    record_bytes = 4 + dimension * 4
     for offset in range(max_rows):
-        raw = handle.read(RECORD_BYTES)
+        raw = handle.read(record_bytes)
         if not raw:
             break
-        if len(raw) != RECORD_BYTES:
-            raise EOFError(f"SIFT base 最后一条记录被截断: {len(raw)}/{RECORD_BYTES}")
-        dimension = struct.unpack_from("<i", raw, 0)[0]
-        if dimension != DIMENSION:
-            raise ValueError(f"第 {first_id + offset} 条向量维度为 {dimension}，期望 {DIMENSION}")
+        if len(raw) != record_bytes:
+            raise EOFError(f"base 最后一条记录被截断: {len(raw)}/{record_bytes}")
+        actual_dimension = struct.unpack_from("<i", raw, 0)[0]
+        if actual_dimension != dimension:
+            raise ValueError(
+                f"第 {first_id + offset} 条向量维度为 {actual_dimension}，期望 {dimension}"
+            )
         ids.append(first_id + offset)
         values.extend(raw[4:])
     return ids, values
 
 
-def build_arrow_table(ids: list[int], values: bytearray, arrow_schema):
+def build_arrow_table(
+    ids: list[int], values: bytearray, arrow_schema, dimension: int = DIMENSION
+):
     """将连续 Float32 buffer 构造成与 Iceberg schema 完全一致的 PyArrow 表。"""
     import pyarrow as pa
 
-    value_count = len(ids) * DIMENSION
+    value_count = len(ids) * dimension
     value_array = pa.Array.from_buffers(
         pa.float32(), value_count, [None, pa.py_buffer(values)]
     )
     embedding_type = arrow_schema.field("embedding").type
     if pa.types.is_large_list(embedding_type):
         offsets = pa.array(
-            range(0, value_count + 1, DIMENSION),
+            range(0, value_count + 1, dimension),
             type=pa.int64(),
         )
         embeddings = pa.LargeListArray.from_arrays(
@@ -77,7 +82,7 @@ def build_arrow_table(ids: list[int], values: bytearray, arrow_schema):
         )
     else:
         offsets = pa.array(
-            range(0, value_count + 1, DIMENSION),
+            range(0, value_count + 1, dimension),
             type=pa.int32(),
         )
         embeddings = pa.ListArray.from_arrays(
@@ -91,16 +96,18 @@ def build_arrow_table(ids: list[int], values: bytearray, arrow_schema):
     )
 
 
-def validate_metadata(metadata_path: Path, partition_buckets: int) -> dict:
+def validate_metadata(
+    metadata_path: Path, partition_buckets: int, dimension: int = DIMENSION
+) -> dict:
     """验证最终 metadata 的 snapshot、schema、分区和向量维度属性。"""
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if metadata.get("format-version") != 2:
         raise RuntimeError(f"Iceberg format-version={metadata.get('format-version')}，期望 2")
     properties = metadata.get("properties")
     actual_dim = properties.get(VECTOR_DIM_PROPERTY) if isinstance(properties, dict) else None
-    if actual_dim != str(DIMENSION):
+    if actual_dim != str(dimension):
         raise RuntimeError(
-            f"metadata 属性 {VECTOR_DIM_PROPERTY}={actual_dim!r}，期望 {str(DIMENSION)!r}"
+            f"metadata 属性 {VECTOR_DIM_PROPERTY}={actual_dim!r}，期望 {str(dimension)!r}"
         )
     if metadata.get("current-snapshot-id") is None:
         raise RuntimeError("最终 metadata 没有 current-snapshot-id")
@@ -148,6 +155,10 @@ def main() -> None:
     parser.add_argument("--warehouse", required=True)
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--table", required=True)
+    parser.add_argument("--dataset", default="sift1m")
+    parser.add_argument("--dimension", type=int, default=DIMENSION)
+    parser.add_argument("--rows", type=int, default=EXPECTED_ROWS)
+    parser.add_argument("--id-base", type=int, choices=(0, 1), default=1)
     parser.add_argument("--batch-rows", type=int, default=131_072)
     parser.add_argument("--compression", default="uncompressed",
                         choices=("uncompressed", "zstd", "snappy", "gzip"))
@@ -158,14 +169,17 @@ def main() -> None:
     validate_identifier(args.table, "table")
     if args.batch_rows < 1:
         raise ValueError("batch-rows 必须大于 0")
+    if args.dimension < 1 or args.rows < 1:
+        raise ValueError("dimension 和 rows 必须大于 0")
     if args.partition_buckets < 0:
         raise ValueError("partition-buckets 不能小于 0")
 
     input_path = local_path(args.input)
     warehouse_path = local_path(args.warehouse)
-    if not input_path.is_file() or input_path.stat().st_size != EXPECTED_BYTES:
+    expected_bytes = args.rows * (4 + args.dimension * 4)
+    if not input_path.is_file() or input_path.stat().st_size != expected_bytes:
         actual = input_path.stat().st_size if input_path.exists() else "missing"
-        raise ValueError(f"SIFT base 大小为 {actual}，期望 {EXPECTED_BYTES}")
+        raise ValueError(f"{args.dataset} base 大小为 {actual}，期望 {expected_bytes}")
     table_path = warehouse_path / args.namespace / args.table
     if table_path.exists():
         raise FileExistsError(f"表目录已存在，拒绝复用旧快照: {table_path}")
@@ -202,12 +216,12 @@ def main() -> None:
     properties = {
         "format-version": "2",
         "write.parquet.compression-codec": args.compression,
-        VECTOR_DIM_PROPERTY: str(DIMENSION),
+        VECTOR_DIM_PROPERTY: str(args.dimension),
     }
 
-    with tempfile.TemporaryDirectory(prefix="sift1m-pyiceberg-") as catalog_dir:
+    with tempfile.TemporaryDirectory(prefix=f"{args.dataset}-pyiceberg-") as catalog_dir:
         catalog = load_catalog(
-            "sift1m_offline",
+            f"{args.dataset}_offline",
             type="sql",
             uri=f"sqlite:///{catalog_dir}/catalog.db",
             warehouse=warehouse_path.as_uri(),
@@ -225,32 +239,40 @@ def main() -> None:
 
         written = 0
         with input_path.open("rb") as handle:
-            while written < EXPECTED_ROWS:
-                ids, values = read_fvecs_batch(handle, written + 1, args.batch_rows)
+            while written < args.rows:
+                ids, values = read_fvecs_batch(
+                    handle,
+                    written + args.id_base,
+                    min(args.batch_rows, args.rows - written),
+                    args.dimension,
+                )
                 if not ids:
                     break
-                table.append(build_arrow_table(ids, values, arrow_schema))
+                table.append(
+                    build_arrow_table(ids, values, arrow_schema, args.dimension)
+                )
                 written += len(ids)
-                print(f"PyIceberg 已写入 {written:,}/{EXPECTED_ROWS:,}", file=sys.stderr)
+                print(f"PyIceberg 已写入 {written:,}/{args.rows:,}", file=sys.stderr)
             if handle.read(1):
-                raise RuntimeError("SIFT base 在预期一百万行后仍有多余数据")
-        if written != EXPECTED_ROWS:
-            raise RuntimeError(f"写入行数为 {written}，期望 {EXPECTED_ROWS}")
+                raise RuntimeError(f"{args.dataset} base 在预期行数后仍有多余数据")
+        if written != args.rows:
+            raise RuntimeError(f"写入行数为 {written}，期望 {args.rows}")
 
         table = catalog.load_table(f"{args.namespace}.{args.table}")
         metadata_uri = table.metadata_location
 
     metadata_path = local_path(metadata_uri)
-    validate_metadata(metadata_path, args.partition_buckets)
+    validate_metadata(metadata_path, args.partition_buckets, args.dimension)
     parquet_files = list(table_path.rglob("*.parquet"))
     if not parquet_files:
         raise RuntimeError("供数完成后未找到 Parquet 数据文件")
     parquet_bytes = sum(path.stat().st_size for path in parquet_files)
 
     print(f"MVP_PROVIDER=pyiceberg-{pyiceberg.__version__}-pyarrow-{pa.__version__}")
-    print(f"MVP_ROW_COUNT={EXPECTED_ROWS}")
+    print(f"MVP_DATASET={args.dataset}")
+    print(f"MVP_ROW_COUNT={args.rows}")
     print("MVP_FIELD_VECTOR_DIM=unsupported")
-    print(f"MVP_VECTOR_DIM_PROPERTY={VECTOR_DIM_PROPERTY}={DIMENSION}")
+    print(f"MVP_VECTOR_DIM_PROPERTY={VECTOR_DIM_PROPERTY}={args.dimension}")
     print(f"MVP_PARTITION_BUCKETS={args.partition_buckets}")
     print(f"MVP_PARQUET_FILES={len(parquet_files)}")
     print(f"MVP_PARQUET_BYTES={parquet_bytes}")

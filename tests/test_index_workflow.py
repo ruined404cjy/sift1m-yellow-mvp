@@ -125,10 +125,10 @@ class IndexWorkflowTest(unittest.TestCase):
         self.assertIn('MVP_PERF_DOP:-1,8', PERF_RUNNER)
         self.assertIn('MVP_PERF_NQ:-100', PERF_RUNNER)
         flat_config = PERF_RUNNER.index('configure-index.sh" flat')
-        flat_matrix = PERF_RUNNER.index('run_matrix index "$root_dir/state/perf/flat"')
+        flat_matrix = PERF_RUNNER.index('run_matrix index "$state_dir/perf/flat"')
         flat_clean = PERF_RUNNER.index('clean.sh" index', flat_matrix)
         pq_config = PERF_RUNNER.index('configure-index.sh" pq', flat_clean)
-        pq_matrix = PERF_RUNNER.index('run_matrix index "$root_dir/state/perf/pq"')
+        pq_matrix = PERF_RUNNER.index('run_matrix index "$state_dir/perf/pq"')
         pq_clean = PERF_RUNNER.index('clean.sh" index', pq_matrix)
         fullscan = PERF_RUNNER.index('run_matrix fullscan', pq_clean)
         expected_order = [

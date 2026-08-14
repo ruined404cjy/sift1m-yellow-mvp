@@ -1,6 +1,10 @@
-# 黄区 SIFT1M 多供数离线测试套件
+# 黄区 SIFT1M 多供数与 GIST1M 性能测试套件
 
-版本：1.4.1
+版本：1.5.0
+
+套件保留 SIFT1M 的既有命令和默认配置，并新增独立的 GIST1M 配置、状态目录及
+PyIceberg 性能入口。GIST1M 的准备、参数和执行说明见
+[`docs/gist1m-yellow.md`](docs/gist1m-yellow.md)。
 
 ## 1. 目标与边界
 
@@ -56,17 +60,21 @@ sift1m-yellow-mvp/
 ├── VERSION
 ├── config/
 │   ├── mvp.env.example          # 32 bucket、串行查询和索引构建
-│   └── perf.env.example         # 32 bucket、1024 clusters、8 workers
+│   ├── perf.env.example         # SIFT 32 bucket、1024 clusters、8 workers
+│   └── gist-perf.env.example    # GIST 独立性能配置
+├── docs/gist1m-yellow.md        # GIST 数据准备、参数和执行说明
 ├── requirements/pyiceberg-lock.txt
 ├── wheelhouse/                  # 离线 Python wheels 和 SHA256SUMS
-├── downloads/                   # 四个 SIFT1M 文件
+├── downloads/                   # SIFT1M 或 GIST1M 原始文件
 ├── checksums/SHA256SUMS
 ├── state/                       # metadata、日志和结果
 ├── bin/
 │   ├── download-sift1m.sh
+│   ├── download-gist1m.sh
 │   ├── download-pyiceberg-wheelhouse.sh
 │   ├── install-pyiceberg-offline.sh
 │   ├── verify-sift1m.sh
+│   ├── verify-gist1m.sh
 │   ├── init-env.sh
 │   ├── preflight.sh
 │   ├── deploy.sh
@@ -75,6 +83,7 @@ sift1m-yellow-mvp/
 │   ├── supply-data.sh
 │   ├── seed-sift1m.sh           # Spark
 │   ├── seed-sift1m-pyiceberg.sh
+│   ├── seed-gist1m-pyiceberg.sh
 │   ├── seed-sift1m-rust.sh
 │   ├── register-table.sh
 │   ├── verify-table.sh
@@ -84,6 +93,7 @@ sift1m-yellow-mvp/
 │   ├── test-index.sh
 │   ├── run-clean-test.sh
 │   ├── run-perf.sh
+│   ├── run-gist-perf.sh
 │   ├── benchmark.py
 │   ├── run-matrix.py
 │   └── make-offline-bundle.sh
@@ -98,9 +108,10 @@ sift1m-yellow-mvp/
 
 ### 4.1 SIFT1M
 
-GitHub 源码仓库不保存 SIFT1M 数据对象。`downloads/` 保留固定目录及 Git LFS 规则；黄区将已有数据复制到该目录后，再提交到 CodeHub。四个文件仍须通过本节大小和 SHA-256 门禁。
+GitHub 源码仓库不保存 SIFT1M 数据对象。黄区联网下载或从联网区传入四个文件后，
+仍须通过本节大小和 SHA-256 门禁。
 
-在联网机器执行：
+在可访问 Hugging Face 的黄区服务器执行：
 
 ```bash
 bash bin/download-sift1m.sh
@@ -264,6 +275,8 @@ bash bin/clean.sh all
 | 参数 | 默认值 | 说明 |
 |---|---:|---|
 | `MVP_CONFIG_PROFILE` | mvp / perf | 约束总入口只能使用对应类型的配置 |
+| `MVP_DATASET` / `MVP_VECTOR_DIM` / `MVP_ROW_COUNT` | 数据集配置指定 | 隔离数据集名称、向量维度和表行数契约 |
+| `MVP_QUERY_COUNT` / `MVP_GT_K` | 数据集配置指定 | 校验 query 总数和官方 GT 最大 K |
 | `MVP_WAREHOUSE_DIR` | 配置文件指定 | 裸绝对 warehouse 路径 |
 | `MVP_NAMESPACE` / `MVP_TABLE` | 配置文件指定 | 专用于本次测试的 Catalog 表 |
 | `MVP_VECTOR_TYPE` | `floatvector` | 查询 literal cast；建表实际类型由 Catalog 字段级 `vector_dim=128` 决定 |
@@ -277,6 +290,8 @@ bash bin/clean.sh all
 | `MVP_NUM_CLUSTERS` | 256 / 1024 | MVP 功能回归 / perf 性能基线的聚类数 |
 | `MVP_SAMPLE_RATE` | 100000 | 索引训练采样数 |
 | `MVP_BUILD_WORKERS` | 1 / 8 | 串行 / 性能配置的构建 worker 数 |
+| `MVP_NUM_SUB_QUANTIZERS` | 未设置 | IVF-PQ 子向量数 M；设置时必须整除向量维度 |
+| `MVP_PQ_NBITS` | 未设置 | IVF-PQ 编码位数，范围 1..8 |
 | `MVP_NPROBE` | 10 | 索引查询探测簇数 |
 | `MVP_TEST_NQ` | 100 | 一键测试查询数 |
 | `MVP_TEST_K` | 10 | 一键测试 Top-K |
@@ -335,7 +350,7 @@ bash bin/clean.sh all
 | `MVP_BUILD_WORKERS` | 设置索引构建 worker 数 | 主要影响构建墙钟时间、CPU 和峰值内存；不作为查询并行度 | 清理索引后重建 |
 | `MVP_NPROBE` | 设置查询时探测的 IVF clusters 数 | 增大通常提高 Recall，同时增加候选计算、I/O 和查询延迟；clusters 不同时相同 nprobe 代表不同扫描比例 | 仅重跑索引查询 |
 
-PQ 的 `num_sub_quantizers` 和 `nbits` 当前不通过 `.env` 暴露。测试报告从 Registry segment 的 `algorithm_details` 记录实际值，不能仅根据 Catalog 请求参数推断落盘算法。
+`MVP_NUM_SUB_QUANTIZERS` 和 `MVP_PQ_NBITS` 仅在配置文件显式设置时写入 PQ 构建参数；SIFT 配置保持实现默认值，GIST 配置固定 M=60、nbits=8。测试报告从 Registry segment 的 `algorithm_details` 核对实际值。
 
 #### 5.5.3 查询规模和统计口径
 
@@ -606,6 +621,13 @@ MVP_OFFLINE_PROVIDER=rust bash bin/make-offline-bundle.sh
 ```
 
 完整包包含 SIFT1M 数据；PyIceberg 模式还强制包含经过 SHA-256 校验的 wheelhouse。`state/`、`.venv/` 和 Python cache 不进入包。Spark/JDK/runtime 使用 `mvp.env` 中的黄区绝对路径。
+
+GIST1M 首版离线包只携带 GIST 数据和 PyIceberg 制品：
+
+```bash
+MVP_OFFLINE_DATASET=gist1m MVP_OFFLINE_PROVIDER=pyiceberg \
+  bash bin/make-offline-bundle.sh
+```
 
 ## 14. 常见故障
 

@@ -3,21 +3,22 @@
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-env_file="$root_dir/mvp.env"
+env_file="${MVP_ENV_FILE:-$root_dir/mvp.env}"
 if [[ ! -f "$env_file" ]]; then
   echo "ERROR: 缺少 $env_file" >&2
   exit 1
 fi
 # shellcheck source=/dev/null
 source "$env_file"
+state_dir="${MVP_STATE_DIR:-$root_dir/state}"
 
 gsql_bin="${MVP_GSQL_BIN:-gsql}"
 db="${MVP_DB:-postgres}"
 port="${MVP_PORT:-37000}"
-mkdir -p "$root_dir/state"
+mkdir -p "$state_dir"
 
 "$gsql_bin" -X -d "$db" -p "$port" -v ON_ERROR_STOP=1 \
-  2>&1 <<'SQL' | tee "$root_dir/state/deploy.log"
+  2>&1 <<'SQL' | tee "$state_dir/deploy.log"
 CREATE EXTENSION IF NOT EXISTS iceberg_catalog;
 CREATE EXTENSION IF NOT EXISTS iceberg_fdw;
 

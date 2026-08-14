@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-env_file="$root_dir/mvp.env"
+env_file="${MVP_ENV_FILE:-$root_dir/mvp.env}"
 if [[ ! -f "$env_file" ]]; then
   echo "ERROR: 缺少 $env_file" >&2
   exit 1
@@ -14,6 +14,9 @@ source "$env_file"
 namespace="${MVP_NAMESPACE:?MVP_NAMESPACE 未配置}"
 table="${MVP_TABLE:?MVP_TABLE 未配置}"
 partition_buckets="${MVP_PARTITION_BUCKETS:-32}"
+dimension="${MVP_VECTOR_DIM:-128}"
+row_count="${MVP_ROW_COUNT:-1000000}"
+id_base="${MVP_ID_BASE:-1}"
 gsql_bin="${MVP_GSQL_BIN:-gsql}"
 db="${MVP_DB:-postgres}"
 port="${MVP_PORT:-37000}"
@@ -28,6 +31,16 @@ if [[ ! "$partition_buckets" =~ ^[0-9]+$ ]]; then
   echo "ERROR: MVP_PARTITION_BUCKETS 必须是非负整数: $partition_buckets" >&2
   exit 1
 fi
+for value in "$dimension" "$row_count"; do
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: 维度和行数必须是正整数: $value" >&2
+    exit 1
+  fi
+done
+if [[ "$id_base" != "0" && "$id_base" != "1" ]]; then
+  echo "ERROR: MVP_ID_BASE 仅支持 0 或 1" >&2
+  exit 1
+fi
 
 catalog_state="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -F '|' -c \
   "SELECT count(*), sum(CASE WHEN relid='$namespace.$table'::regclass THEN 1 ELSE 0 END), sum(CASE WHEN metadata_location LIKE 'file:///%.metadata.json' THEN 1 ELSE 0 END) FROM iceberg_catalog.tables_internal WHERE namespace='$namespace' AND table_name='$table';" \
@@ -40,8 +53,8 @@ fi
 actual_type="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
   "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid='$namespace.$table'::regclass AND attname='embedding' AND NOT attisdropped;" \
   | tr -d '[:space:]')"
-if [[ "$actual_type" != "vector(128)" && "$actual_type" != "floatvector(128)" ]]; then
-  echo "ERROR: embedding 类型为 ${actual_type:-<empty>}，期望 vector(128) 或 floatvector(128)" >&2
+if [[ "$actual_type" != "vector($dimension)" && "$actual_type" != "floatvector($dimension)" ]]; then
+  echo "ERROR: embedding 类型为 ${actual_type:-<empty>}，期望 vector($dimension) 或 floatvector($dimension)" >&2
   exit 1
 fi
 
@@ -89,8 +102,10 @@ PY
 data_range="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -F '|' -c \
   "SELECT count(*), min(id), max(id) FROM $namespace.$table;" \
   | tr -d '[:space:]')"
-if [[ "$data_range" != "1000000|1|1000000" ]]; then
-  echo "ERROR: 数据范围为 ${data_range:-<empty>}，期望 1000000|1|1000000" >&2
+expected_max="$((id_base + row_count - 1))"
+expected_range="$row_count|$id_base|$expected_max"
+if [[ "$data_range" != "$expected_range" ]]; then
+  echo "ERROR: 数据范围为 ${data_range:-<empty>}，期望 $expected_range" >&2
   exit 1
 fi
 echo "表复用门禁通过: $namespace.$table, $actual_type, bucket=$partition_buckets, $data_range"

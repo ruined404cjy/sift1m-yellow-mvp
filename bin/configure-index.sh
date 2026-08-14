@@ -10,14 +10,16 @@ if [[ ! -f "$env_file" ]]; then
   echo "ERROR: 缺少 $env_file" >&2
   exit 1
 fi
+# shellcheck source=/dev/null
+source "$env_file"
 case "$profile" in
   pq)
-    index_name=idx_sift_ivfpq
+    index_name="${MVP_INDEX_PQ_NAME:-idx_sift_ivfpq}"
     index_type=ivf_pq
     implementation=ivf_pq
     ;;
   flat)
-    index_name=idx_sift_ivfflat
+    index_name="${MVP_INDEX_FLAT_NAME:-idx_sift_ivfflat}"
     index_type=ivf_flat
     implementation=ivf
     ;;
