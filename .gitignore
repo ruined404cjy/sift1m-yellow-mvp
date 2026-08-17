@@ -1,7 +1,5 @@
-/downloads/*.fvecs
-/downloads/*.ivecs
-/downloads/gist.tar.gz
-/downloads/.cache/
+/downloads/**
+!/downloads/.gitkeep
 /state/*
 !/state/.gitkeep
 /mvp.env
