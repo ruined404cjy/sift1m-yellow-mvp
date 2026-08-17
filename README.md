@@ -62,9 +62,7 @@ sift1m-yellow-mvp/
 │   ├── mvp.env.example          # 32 bucket、串行查询和索引构建
 │   ├── perf.env.example         # SIFT 32 bucket、1024 clusters、8 workers
 │   └── gist-perf.env.example    # GIST 独立性能配置
-├── docs/
-│   ├── gist1m-yellow.md         # GIST 数据准备、参数和执行说明
-│   └── github-codehub-sync.md   # GitHub 到 CodeHub 的源码与 LFS 同步约定
+├── docs/gist1m-yellow.md        # GIST 数据准备、参数和执行说明
 ├── requirements/pyiceberg-lock.txt
 ├── wheelhouse/                  # 离线 Python wheels 和 SHA256SUMS
 ├── downloads/                   # SIFT1M 或 GIST1M 原始文件
@@ -107,11 +105,6 @@ sift1m-yellow-mvp/
 ```
 
 ## 4. 准备离线制品
-
-GitHub `main` 只保存源码和空的 `downloads/` 目录，CodeHub `main` 在此基础上保存数据集
-的 Git LFS pointer 和对象。两端共用仓库中的 `.gitignore`、`.gitattributes`，黄区按
-[`docs/github-codehub-sync.md`](docs/github-codehub-sync.md) 单向合并 GitHub 更新并向
-CodeHub 提交数据。通配 LFS 规则覆盖 `downloads/` 下后续新增的任意数据格式。
 
 ### 4.1 SIFT1M
 
