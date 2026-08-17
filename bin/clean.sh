@@ -94,8 +94,6 @@ clean_indexes() {
         "SELECT iceberg_catalog.drop_index('$namespace', '$table', '$index_name');"
     done
 
-    "$gsql_bin" -X -d "$db" -p "$port" -v ON_ERROR_STOP=1 -c \
-      "SELECT iceberg_catalog.vacuum_index('$namespace', '$table', NULL, INTERVAL '0 seconds', FALSE, TRUE);"
   fi
   remaining="$("$gsql_bin" -X -d "$db" -p "$port" -v ON_ERROR_STOP=1 -t -A -c \
     "SELECT count(*) FROM iceberg_catalog.table_indexes WHERE namespace='$namespace' AND table_name='$table';" \

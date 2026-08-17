@@ -90,10 +90,14 @@ class IndexWorkflowTest(unittest.TestCase):
 
     def test_index_cleanup_uses_catalog_apis_and_verifies_rows(self):
         self.assertIn("iceberg_catalog.drop_index", CLEAN)
-        self.assertIn("iceberg_catalog.vacuum_index", CLEAN)
+        self.assertNotIn("iceberg_catalog.vacuum_index", CLEAN)
         self.assertIn("clean-index-artifacts.py", CLEAN)
         self.assertIn("SELECT count(*) FROM iceberg_catalog.table_indexes", CLEAN)
         self.assertNotIn("DELETE FROM iceberg_catalog.table_indexes", CLEAN)
+        self.assertLess(
+            CLEAN.index("SELECT count(*) FROM iceberg_catalog.table_indexes"),
+            CLEAN.index("clean-index-artifacts.py"),
+        )
 
     def test_cleanup_stops_when_catalog_state_query_fails(self):
         self.assertIn("load_catalog_state", CLEAN)
