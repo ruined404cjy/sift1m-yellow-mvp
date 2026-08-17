@@ -21,6 +21,59 @@ warehouse 和 `state/gist1m/` 状态目录。SIFT 的 `mvp.env` 和 `state/` 保
 Spark 和 Rust 供数路径不参与首版 GIST 基线。该边界将新增代码集中在定长 fvecs
 读取和 PyIceberg 公共链路，避免引入第二套 Catalog、索引和 benchmark 实现。
 
+### 1.1 复用入口与阅读顺序
+
+GIST 只保留数据集契约、下载校验、供数入口和配置隔离，执行框架以根目录
+[`README.md`](../README.md) 描述的 SIFT 公共流程为准。维护或审查 GIST 流程时按以下
+顺序阅读：
+
+1. [`README.md` 的目标与边界](../README.md#1-目标与边界)：了解 producer snapshot、
+   Catalog 主动建表和 metadata head 切换的总体契约；
+2. [`README.md` 的 MVP 与 perf 一键测试](../README.md#51-mvp-与-perf-一键测试)和
+   [模块入口](../README.md#53-模块入口)：了解公共执行顺序和模块职责；
+3. [`config/gist-perf.env.example`](../config/gist-perf.env.example)和
+   [`bin/run-gist-perf.sh`](../bin/run-gist-perf.sh)：了解 GIST 固定契约、独立配置和
+   `state/gist1m/` 状态边界；
+4. [`bin/run-perf.sh`](../bin/run-perf.sh)：了解 `fresh`、`reuse`、Flat、PQ 和
+   FullScan 的实际编排；
+5. [`bin/supply-data.sh`](../bin/supply-data.sh)、
+   [`bin/seed-gist1m-pyiceberg.sh`](../bin/seed-gist1m-pyiceberg.sh)和
+   [`src/seed_sift1m_pyiceberg.py`](../src/seed_sift1m_pyiceberg.py)：了解 GIST
+   PyIceberg 分派、960 维参数和公共 writer；
+6. [`README.md` 的统一 fixture 接入门禁](../README.md#9-统一-fixture-接入门禁)、
+   [`bin/register-table.sh`](../bin/register-table.sh)和
+   [`bin/verify-table.sh`](../bin/verify-table.sh)：了解建表、snapshot 接入和复用门禁；
+7. [`bin/configure-index.sh`](../bin/configure-index.sh)、
+   [`bin/build-index.sh`](../bin/build-index.sh)、
+   [`bin/run-matrix.py`](../bin/run-matrix.py)和
+   [`bin/benchmark.py`](../bin/benchmark.py)：了解索引路由、构建校验、计划门禁和指标口径。
+
+一键入口的实际调用链为：
+
+```text
+bin/run-gist-perf.sh
+  → bin/run-perf.sh fresh|reuse pyiceberg
+    → bin/preflight.sh → bin/deploy.sh
+    → fresh: bin/clean.sh all
+             → bin/supply-data.sh pyiceberg
+             → bin/seed-gist1m-pyiceberg.sh
+             → src/seed_sift1m_pyiceberg.py
+             → bin/register-table.sh
+      reuse: bin/clean.sh results → bin/clean.sh index
+    → bin/verify-table.sh
+    → bin/configure-index.sh flat → bin/build-index.sh → bin/run-matrix.py
+    → bin/clean.sh index
+    → bin/configure-index.sh pq → bin/build-index.sh → bin/run-matrix.py
+    → bin/clean.sh index → bin/run-matrix.py fullscan
+```
+
+`bin/register-table.sh` 是 producer snapshot 接入步骤的脚本名。其数据库操作为调用
+`iceberg_catalog.create_table` 创建带字段级 `vector_dim=960` 的 Catalog 表，再更新
+`iceberg_catalog.tables_internal.metadata_location/current_snapshot_id` 指向 PyIceberg
+snapshot；该流程不调用 `iceberg_catalog.register_table` 接口。GIST 复用这份公共脚本，
+维度、namespace、table、warehouse 和状态目录均来自 `gist.env` 及入口导出的
+`MVP_ENV_FILE`、`MVP_STATE_DIR`。
+
 ## 2. 数据契约
 
 | 文件 | 记录数 | 记录宽度 | 字节数 |
