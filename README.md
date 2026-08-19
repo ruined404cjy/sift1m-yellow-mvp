@@ -715,5 +715,4 @@ producer 命令清除数据库 `LD_LIBRARY_PATH`；Bridge runner 同时清除 `C
 - [Iceberg 向量索引端到端测试指南](https://github.com/Doreami/infra-compile-scripts/blob/main/%E7%AB%AF%E5%88%B0%E7%AB%AF%E6%80%A7%E8%83%BD%E6%B5%8B%E8%AF%95/%E7%AB%AF%E5%88%B0%E7%AB%AF%E6%B5%8B%E8%AF%95%E6%8C%87%E5%8D%97.md)
 - [PyIceberg SqlCatalog API](https://py.iceberg.apache.org/reference/pyiceberg/catalog/sql/)
 - [PyIceberg Table append API](https://py.iceberg.apache.org/reference/pyiceberg/table/)
-- `../type-and-deployment-contract.md`
 - `../spark-supply-guide.md`
