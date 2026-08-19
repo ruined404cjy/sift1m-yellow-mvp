@@ -14,8 +14,8 @@ source "$env_file"
 provider="${1:-all}"
 dataset="${MVP_DATASET:-sift1m}"
 state_dir="${MVP_STATE_DIR:-$root_dir/state}"
-if [[ "$provider" != "all" && "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" ]]; then
-  echo "Usage: bash bin/preflight.sh [all|spark|pyiceberg|rust]" >&2
+if [[ "$provider" != "all" && "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" && "$provider" != "bridge" ]]; then
+  echo "Usage: bash bin/preflight.sh [all|spark|pyiceberg|rust|bridge]" >&2
   exit 2
 fi
 
@@ -81,6 +81,7 @@ done
 if [[ "$provider" == "all" || "$provider" == "spark" ]]; then
   : "${SPARK_HOME:?SPARK_HOME 未配置}"
   : "${ICEBERG_SPARK_RUNTIME_JAR:?ICEBERG_SPARK_RUNTIME_JAR 未配置}"
+  : "${JAVA_HOME:?JAVA_HOME 未配置}"
   if [[ ! -x "$SPARK_HOME/bin/spark-submit" ]]; then
     echo "ERROR: 找不到 $SPARK_HOME/bin/spark-submit" >&2
     exit 1
@@ -89,10 +90,19 @@ if [[ "$provider" == "all" || "$provider" == "spark" ]]; then
     echo "ERROR: 找不到 runtime jar: $ICEBERG_SPARK_RUNTIME_JAR" >&2
     exit 1
   fi
+  if [[ ! -x "$JAVA_HOME/bin/java" ]]; then
+    echo "ERROR: 找不到 $JAVA_HOME/bin/java" >&2
+    exit 1
+  fi
 
   echo "Java:"
-  java_version="$(env -u LD_LIBRARY_PATH java -version 2>&1)"
+  java_version="$(env -u LD_LIBRARY_PATH "$JAVA_HOME/bin/java" -version 2>&1)"
   sed -n '1,3p' <<< "$java_version"
+  java_major="$(sed -n '1s/.*version "\([0-9][0-9]*\).*/\1/p' <<< "$java_version")"
+  if [[ -z "$java_major" || "$java_major" -lt 17 ]]; then
+    echo "ERROR: Iceberg Spark runtime 1.11.0 要求 JAVA_HOME 指向 JDK 17 或更高版本" >&2
+    exit 1
+  fi
   echo "Spark:"
   spark_version="$(env -u LD_LIBRARY_PATH "$SPARK_HOME/bin/spark-submit" --version 2>&1)"
   sed -n '1,12p' <<< "$spark_version"
@@ -126,7 +136,7 @@ PY
   env -u LD_LIBRARY_PATH "$python_bin" -m pip check
 fi
 
-if [[ "$provider" == "all" || "$provider" == "rust" ]]; then
+if [[ "$provider" == "all" || "$provider" == "rust" || "$provider" == "bridge" ]]; then
   : "${MVP_BRIDGE_SOURCE:?MVP_BRIDGE_SOURCE 未配置}"
   cargo_bin="${MVP_CARGO_BIN:-cargo}"
   if ! command -v "$cargo_bin" >/dev/null 2>&1 && [[ ! -x "$cargo_bin" ]]; then
@@ -136,6 +146,22 @@ if [[ "$provider" == "all" || "$provider" == "rust" ]]; then
   if [[ ! -f "$MVP_BRIDGE_SOURCE/Cargo.toml" || ! -f "$MVP_BRIDGE_SOURCE/Cargo.lock" ]]; then
     echo "ERROR: bridge 工作树缺少 Cargo.toml 或 Cargo.lock: $MVP_BRIDGE_SOURCE" >&2
     exit 1
+  fi
+  if [[ "$provider" == "bridge" || "$provider" == "all" ]]; then
+    for contract in \
+      include/iceberg_bridge.h \
+      src/services/managed_table/fast_append.rs \
+      src/services/managed_table/write.rs; do
+      if [[ ! -f "$MVP_BRIDGE_SOURCE/$contract" ]]; then
+        echo "ERROR: bridge v3 provider 缺少源码契约: $MVP_BRIDGE_SOURCE/$contract" >&2
+        exit 1
+      fi
+    done
+    if ! grep -q 'defaults to V3' "$MVP_BRIDGE_SOURCE/include/iceberg_bridge.h" || \
+       ! grep -q 'iceberg_bridge_table_write_partitioned_data_files' "$MVP_BRIDGE_SOURCE/include/iceberg_bridge.h"; then
+      echo "ERROR: bridge 工作树不具备 v3 建表和分区写入 ABI" >&2
+      exit 1
+    fi
   fi
   echo "Rust: $("$cargo_bin" --version)"
   echo "Bridge source: $MVP_BRIDGE_SOURCE"
@@ -164,7 +190,7 @@ echo "数据库性能参数:"
   "SELECT name, setting, unit FROM pg_settings WHERE name IN ('max_process_memory','shared_buffers','work_mem','enable_thread_pool','thread_pool_attr','enable_dynamic_workload','use_workload_manager') ORDER BY name;" || true
 echo "Catalog C 函数实际绑定:"
 "$gsql_bin" -X -d "${MVP_DB:-postgres}" -p "${MVP_PORT:-37000}" \
-  -c "SELECT p.proname, p.probin FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='iceberg_catalog' AND p.proname='create_table';"
+  -c "SELECT p.proname, p.probin FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='iceberg_catalog' AND p.proname IN ('create_table','register_table') ORDER BY p.proname;"
 
 gausshome="${MVP_GAUSSHOME:-${GAUSSHOME:-}}"
 if [[ -n "$gausshome" && -d "$gausshome" ]]; then

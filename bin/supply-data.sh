@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 将 provider 参数分派到现有的三条供数路径。
+# 将 provider 参数分派到当前数据集的供数入口。
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,6 +22,12 @@ case "$dataset:$provider" in
     ;;
   sift1m:rust)
     script=seed-sift1m-rust.sh
+    ;;
+  sift1m:bridge|gist1m:bridge)
+    script=seed-bridge.sh
+    ;;
+  gist1m:spark)
+    script=seed-spark.sh
     ;;
   gist1m:pyiceberg)
     script=seed-gist1m-pyiceberg.sh

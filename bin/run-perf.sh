@@ -22,15 +22,15 @@ if [[ "${MVP_CONFIG_PROFILE:-}" != "perf" ]]; then
   exit 1
 fi
 if [[ "$mode" != "fresh" && "$mode" != "reuse" ]]; then
-  echo "Usage: bash bin/run-perf.sh [fresh|reuse] [spark|pyiceberg|rust]" >&2
+  echo "Usage: bash bin/run-perf.sh [fresh|reuse] [spark|pyiceberg|rust|bridge]" >&2
   exit 2
 fi
-if [[ "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" ]]; then
-  echo "Usage: bash bin/run-perf.sh [fresh|reuse] [spark|pyiceberg|rust]" >&2
+if [[ "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" && "$provider" != "bridge" ]]; then
+  echo "Usage: bash bin/run-perf.sh [fresh|reuse] [spark|pyiceberg|rust|bridge]" >&2
   exit 2
 fi
-if [[ "$dataset" == "gist1m" && "$provider" != "pyiceberg" ]]; then
-  echo "ERROR: GIST1M 首版仅支持 PyIceberg 供数" >&2
+if [[ "$dataset" == "gist1m" && "$provider" == "rust" ]]; then
+  echo "ERROR: GIST1M 不支持旧 Rust SDK v2 provider；请使用 bridge" >&2
   exit 2
 fi
 

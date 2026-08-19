@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 通过 Catalog 主动建表并接入 producer fixture，保留 Catalog 创建的字段级向量类型。
+# 通过 Catalog register_table 原生接入带表级向量维度属性的 producer fixture。
 set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,8 +19,6 @@ fi
 
 namespace="${MVP_NAMESPACE:?MVP_NAMESPACE 未配置}"
 table="${MVP_TABLE:?MVP_TABLE 未配置}"
-vector_type="${MVP_VECTOR_TYPE:-floatvector}"
-warehouse_dir="${MVP_WAREHOUSE_DIR:?MVP_WAREHOUSE_DIR 未配置}"
 partition_buckets="${MVP_PARTITION_BUCKETS:-32}"
 dimension="${MVP_VECTOR_DIM:-128}"
 row_count="${MVP_ROW_COUNT:-1000000}"
@@ -30,11 +28,9 @@ metadata="$(head -1 "$metadata_file")"
 gsql_bin="${MVP_GSQL_BIN:-gsql}"
 db="${MVP_DB:-postgres}"
 port="${MVP_PORT:-37000}"
-bootstrap_dir="${MVP_CATALOG_BOOTSTRAP_DIR:-$warehouse_dir/.catalog-bootstrap}/$namespace/$table"
-bootstrap_uri="file://$bootstrap_dir"
 
 identifier_pattern='^[a-z_][a-z0-9_]*$'
-for value in "$namespace" "$table" "$vector_type"; do
+for value in "$namespace" "$table"; do
   if [[ ! "$value" =~ $identifier_pattern ]]; then
     echo "ERROR: 非法标识符: $value" >&2
     exit 1
@@ -42,10 +38,6 @@ for value in "$namespace" "$table" "$vector_type"; do
 done
 if [[ "$metadata" != file:///*.metadata.json || "$metadata" == *"'"* ]]; then
   echo "ERROR: metadata 必须是具体、无单引号的 file:///...metadata.json URI" >&2
-  exit 1
-fi
-if [[ "$bootstrap_dir" != /* || "$bootstrap_uri" == *"'"* ]]; then
-  echo "ERROR: Catalog bootstrap 目录必须是无单引号的绝对路径: $bootstrap_dir" >&2
   exit 1
 fi
 if [[ ! "$partition_buckets" =~ ^[0-9]+$ ]]; then
@@ -78,6 +70,11 @@ dimension = int(sys.argv[3])
 with open(metadata_path, "r", encoding="utf-8") as handle:
     metadata = json.load(handle)
 
+format_version = metadata.get("format-version")
+if format_version not in (2, 3):
+    raise SystemExit(
+        f"ERROR: fixture format-version 仅支持 2 或 3，实际为 {format_version!r}"
+    )
 snapshot_id = metadata.get("current-snapshot-id")
 if type(snapshot_id) is not int:
     raise SystemExit(f"ERROR: current-snapshot-id 必须是整数，实际为 {snapshot_id!r}")
@@ -89,6 +86,10 @@ if audit_dim != str(dimension):
         "ERROR: fixture 要求字符串审计属性 "
         f"vector_dim.embedding={str(dimension)!r}，实际为 {audit_dim!r}"
     )
+
+table_uuid = metadata.get("table-uuid")
+if not isinstance(table_uuid, str) or not table_uuid:
+    raise SystemExit(f"ERROR: table-uuid 必须是非空字符串，实际为 {table_uuid!r}")
 
 schemas = metadata.get("schemas") or [metadata.get("schema")]
 current_schema_id = metadata.get(
@@ -153,11 +154,14 @@ else:
             f"实际为 {spec_fields!r}"
         )
 
-print(f"{snapshot_id}|{field_dim_display}|{audit_dim}|{partition_buckets}")
+print(
+    f"{format_version}|{snapshot_id}|{table_uuid}|{field_dim_display}|"
+    f"{audit_dim}|{partition_buckets}"
+)
 PY
 )"
-IFS='|' read -r snapshot_id field_vector_dim audit_vector_dim actual_partition_buckets <<< "$fixture_contract"
-echo "Fixture metadata: snapshot=$snapshot_id, field vector_dim=$field_vector_dim, table property vector_dim.embedding=$audit_vector_dim, partition buckets=$actual_partition_buckets"
+IFS='|' read -r format_version snapshot_id table_uuid field_vector_dim audit_vector_dim actual_partition_buckets <<< "$fixture_contract"
+echo "Fixture metadata: format=v$format_version, snapshot=$snapshot_id, uuid=$table_uuid, field vector_dim=$field_vector_dim, table property vector_dim.embedding=$audit_vector_dim, partition buckets=$actual_partition_buckets"
 
 catalog_count="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
   "SELECT count(*) FROM pg_extension WHERE extname='iceberg_catalog';" \
@@ -186,23 +190,11 @@ if [[ "$namespace_count" == "0" ]]; then
   printf "SELECT iceberg_catalog.create_namespace('%s', '{}'::jsonb);\n" "$namespace" >> "$sql_file"
 fi
 cat >> "$sql_file" <<SQL
-SELECT jsonb_typeof(iceberg_catalog.create_table(
+SELECT jsonb_typeof(iceberg_catalog.register_table(
   '$namespace',
   '$table',
-  '{"type":"struct","fields":['
-    '{"id":1,"name":"id","type":"long","required":true},'
-    '{"id":2,"name":"embedding","type":{"type":"list","element-id":3,"element":"float","element-required":true},"required":true,"vector_dim":$dimension}'
-  ']}'::jsonb,
-  '$bootstrap_uri'::text,
-  NULL,
-  NULL,
-  FALSE,
-  '{"format-version":"2","vector_dim.embedding":"$dimension"}'::jsonb
-)) AS create_result_type;
-
-UPDATE iceberg_catalog.tables_internal
-SET metadata_location='$metadata', current_snapshot_id=$snapshot_id
-WHERE namespace='$namespace' AND table_name='$table';
+  '$metadata'
+)) AS register_result_type;
 
 SELECT attname, format_type(atttypid, atttypmod) AS sql_type
 FROM pg_attribute
@@ -233,17 +225,25 @@ actual_type="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
   | tr -d '[:space:]')"
 if [[ "$actual_type" != "vector($dimension)" && "$actual_type" != "floatvector($dimension)" ]]; then
   echo "ERROR: embedding 类型为 ${actual_type:-<empty>}，期望 vector($dimension) 或 floatvector($dimension)" >&2
-  echo "ERROR: Catalog create_table 必须从字段级 vector_dim=$dimension 创建向量列" >&2
+  echo "ERROR: Catalog register_table 必须从表级 vector_dim.embedding=$dimension 创建向量列" >&2
   exit 1
 fi
 
 catalog_head="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -F '|' -c \
-  "SELECT count(*), sum(CASE WHEN relid='$namespace.$table'::regclass THEN 1 ELSE 0 END), sum(CASE WHEN metadata_location='$metadata' AND current_snapshot_id=$snapshot_id THEN 1 ELSE 0 END) FROM iceberg_catalog.tables_internal WHERE namespace='$namespace' AND table_name='$table';" \
+  "SELECT count(*), sum(CASE WHEN relid='$namespace.$table'::regclass THEN 1 ELSE 0 END), sum(CASE WHEN metadata_location='$metadata' AND current_snapshot_id=$snapshot_id THEN 1 ELSE 0 END), sum(CASE WHEN table_uuid='$table_uuid' THEN 1 ELSE 0 END) FROM iceberg_catalog.tables_internal WHERE namespace='$namespace' AND table_name='$table';" \
   | tr -d '[:space:]')"
-if [[ "$catalog_head" != "1|1|1" ]]; then
-  echo "ERROR: Catalog 表头校验失败，实际为 $catalog_head，期望 1|1|1" >&2
+if [[ "$catalog_head" != "1|1|1|1" ]]; then
+  echo "ERROR: Catalog 表头校验失败，实际为 $catalog_head，期望 1|1|1|1" >&2
+  exit 1
+fi
+
+catalog_dim="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -F '|' -c \
+  "SELECT count(*), min(field_vector_dim), max(field_vector_dim) FROM iceberg_catalog.table_schemas s JOIN iceberg_catalog.tables_internal t USING (table_uuid) WHERE t.namespace='$namespace' AND t.table_name='$table' AND s.field_name='embedding';" \
+  | tr -d '[:space:]')"
+if [[ "$catalog_dim" != "1|$dimension|$dimension" ]]; then
+  echo "ERROR: Catalog schema 向量维度校验失败，实际为 $catalog_dim，期望 1|$dimension|$dimension" >&2
   exit 1
 fi
 
 printf '%s.%s\n' "$namespace" "$table" > "$state_dir/table.txt"
-echo "Fixture 接入完成，Catalog 向量类型、metadata、snapshot、relid 和数据范围均通过校验: $namespace.$table"
+echo "Fixture 原生注册完成，Catalog 向量类型、维度、UUID、metadata、snapshot、relid 和数据范围均通过校验: $namespace.$table"

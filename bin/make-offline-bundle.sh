@@ -10,16 +10,16 @@ output="${1:-$parent_dir/${base_name}-offline-${timestamp}.tar.gz}"
 provider="${MVP_OFFLINE_PROVIDER:-all}"
 dataset="${MVP_OFFLINE_DATASET:-sift1m}"
 
-if [[ "$provider" != "all" && "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" ]]; then
-  echo "ERROR: MVP_OFFLINE_PROVIDER 仅支持 all|spark|pyiceberg|rust" >&2
+if [[ "$provider" != "all" && "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" && "$provider" != "bridge" ]]; then
+  echo "ERROR: MVP_OFFLINE_PROVIDER 仅支持 all|spark|pyiceberg|rust|bridge" >&2
   exit 2
 fi
 if [[ "$dataset" != "sift1m" && "$dataset" != "gist1m" ]]; then
   echo "ERROR: MVP_OFFLINE_DATASET 仅支持 sift1m|gist1m" >&2
   exit 2
 fi
-if [[ "$dataset" == "gist1m" && "$provider" != "pyiceberg" ]]; then
-  echo "ERROR: GIST1M 离线包要求 MVP_OFFLINE_PROVIDER=pyiceberg" >&2
+if [[ "$dataset" == "gist1m" && "$provider" == "rust" ]]; then
+  echo "ERROR: GIST1M 离线包不支持 MVP_OFFLINE_PROVIDER=rust" >&2
   exit 2
 fi
 

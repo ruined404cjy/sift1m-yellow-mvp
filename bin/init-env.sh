@@ -11,13 +11,13 @@ case "$profile" in
   mvp) template="$root_dir/config/mvp.env.example" ;;
   perf) template="$root_dir/config/perf.env.example" ;;
   *)
-    echo "Usage: bash bin/init-env.sh <mvp|perf> [spark|pyiceberg|rust|all]" >&2
+    echo "Usage: bash bin/init-env.sh <mvp|perf> [spark|pyiceberg|rust|bridge|all]" >&2
     exit 2
     ;;
 esac
 if [[ -n "$provider" && "$provider" != "all" && "$provider" != "spark" && \
-      "$provider" != "pyiceberg" && "$provider" != "rust" ]]; then
-  echo "Usage: bash bin/init-env.sh <mvp|perf> [spark|pyiceberg|rust|all]" >&2
+      "$provider" != "pyiceberg" && "$provider" != "rust" && "$provider" != "bridge" ]]; then
+  echo "Usage: bash bin/init-env.sh <mvp|perf> [spark|pyiceberg|rust|bridge|all]" >&2
   exit 2
 fi
 
@@ -68,9 +68,10 @@ else
 
   # 已由调用 shell 明确提供的值优先于模板占位值。
   for key in \
-    SPARK_HOME ICEBERG_SPARK_RUNTIME_JAR MVP_PYTHON_BIN MVP_BRIDGE_SOURCE \
+    JAVA_HOME SPARK_HOME ICEBERG_SPARK_RUNTIME_JAR MVP_SPARK_MASTER \
+    MVP_SPARK_DRIVER_MEMORY MVP_PYTHON_BIN MVP_BRIDGE_SOURCE MVP_BRIDGE_BATCH_ROWS \
     MVP_CARGO_BIN MVP_GSQL_BIN MVP_DB MVP_PORT MVP_GAUSSHOME \
-    MVP_WAREHOUSE_DIR MVP_NAMESPACE MVP_TABLE MVP_VECTOR_TYPE \
+    MVP_WAREHOUSE_DIR MVP_NAMESPACE MVP_TABLE MVP_VECTOR_TYPE MVP_TARGET_FILE_SIZE_BYTES \
     MVP_ALLOW_NON_AARCH64; do
     value="${!key:-}"
     if [[ -n "$value" ]]; then
@@ -87,5 +88,5 @@ echo "请核对 mvp.env 中的 producer、GAUSSHOME/gsql、warehouse、namespace
 if [[ -n "$provider" ]]; then
   MVP_ENV_FILE="$env_file" bash "$root_dir/bin/preflight.sh" "$provider"
 else
-  echo "环境检查: bash bin/preflight.sh <spark|pyiceberg|rust|all>"
+  echo "环境检查: bash bin/preflight.sh <spark|pyiceberg|rust|bridge|all>"
 fi

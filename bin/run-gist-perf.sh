@@ -5,6 +5,7 @@ set -euo pipefail
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="${MVP_ENV_FILE:-$root_dir/gist.env}"
 mode="${1:-fresh}"
+provider="${2:-spark}"
 if [[ ! -f "$env_file" ]]; then
   echo "ERROR: 缺少 $env_file" >&2
   echo "ERROR: 先复制 config/gist-perf.env.example 为 gist.env 并修改绝对路径" >&2
@@ -36,4 +37,9 @@ for contract in \
   fi
 done
 
-exec bash "$root_dir/bin/run-perf.sh" "$mode" pyiceberg
+if [[ "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "bridge" ]]; then
+  echo "Usage: bash bin/run-gist-perf.sh [fresh|reuse] [spark|pyiceberg|bridge]" >&2
+  exit 2
+fi
+
+exec bash "$root_dir/bin/run-perf.sh" "$mode" "$provider"

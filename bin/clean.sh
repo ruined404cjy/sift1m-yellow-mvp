@@ -149,17 +149,10 @@ clean_all() {
 
   delete_table_tree "$warehouse_dir" "$warehouse_dir/$namespace/$table"
   delete_table_tree "$warehouse_dir" "$warehouse_dir/${namespace}.db/$table"
-  bootstrap_root="${MVP_CATALOG_BOOTSTRAP_DIR:-$warehouse_dir/.catalog-bootstrap}"
-  if [[ "$bootstrap_root" != /* || "$bootstrap_root" == "/" ]]; then
-    echo "ERROR: MVP_CATALOG_BOOTSTRAP_DIR 必须是非根目录的绝对路径" >&2
-    exit 1
-  fi
-  bootstrap_root="${bootstrap_root%/}"
-  delete_table_tree "$bootstrap_root" "$bootstrap_root/$namespace/$table"
 
   mkdir -p "$state_dir"
   find "$state_dir" -mindepth 1 -depth ! -name .gitkeep -delete
-  echo "Catalog 表、producer 表目录、bootstrap metadata 和运行状态已清理。"
+  echo "Catalog 表、producer 表目录和运行状态已清理。"
   echo "$dataset 原始文件保留在 $root_dir/downloads。"
 }
 

@@ -1,9 +1,9 @@
 # 黄区 SIFT1M 多供数与 GIST1M 性能测试套件
 
-版本：1.5.1
+版本：1.6.0
 
-套件保留 SIFT1M 的既有命令和默认配置，并新增独立的 GIST1M 配置、状态目录及
-PyIceberg 性能入口。GIST1M 的准备、参数和执行说明见
+套件保留 SIFT1M 的既有命令和默认配置，并提供独立的 GIST1M 配置、状态目录及
+Spark/Bridge/PyIceberg 性能入口。GIST1M 的准备、参数和执行说明见
 [`docs/gist1m-yellow.md`](docs/gist1m-yellow.md)。
 
 ## 1. 目标与边界
@@ -12,45 +12,55 @@ PyIceberg 性能入口。GIST1M 的准备、参数和执行说明见
 
 ```text
 SIFT1M
-  → Spark、PyIceberg 或 Rust fixture 生成完整 Iceberg v2 snapshot
-  → iceberg_catalog.create_table 创建字段级 `vector_dim=128` 的 Catalog 表
-  → 将 Catalog `metadata_location/current_snapshot_id` 切换到 fixture
+  → Spark v3、Bridge ABI v3、PyIceberg v2 或 Rust SDK v2 生成完整 Iceberg snapshot
+  → metadata 顶层属性写入 `vector_dim.embedding=128`
+  → Catalog #116 原生 register_table 注册 producer metadata
   → IVF-Flat 或 IVF-PQ 索引（默认 IVF-PQ）
   → 串行冒烟或 K×DOP×扫描模式性能矩阵
   → 官方 GT Recall、QPS、p50/p95/p99
 ```
 
-三条供数路径使用同一数据契约：
+四条供数路径使用同一数据契约：
 
 - Iceberg schema：`id long`、`embedding list<float>`；
 - ID：`1..1,000,000`；
-- 表属性：字符串 `vector_dim.embedding=128`，用于审计；
+- 表属性：字符串 `vector_dim.embedding=128`，用于 Catalog 向量类型映射和审计；
 - fixture 定位：最新 metadata 文件的绝对 `file:///` URI；
-- 数据库入口：Catalog 主动建表后切换到 fixture metadata，保留原外表和 `relid`。
+- 数据库入口：`iceberg_catalog.register_table(namespace, table, metadata_location)`。
 
-Catalog 的原生自动映射契约位于 Iceberg schema 字段：
+Catalog #116 的注册契约位于 metadata 顶层表属性：
 
 ```json
-{"id": 2, "name": "embedding", "type": {"type": "list", "element": "float"}, "vector_dim": 128}
+{"properties": {"vector_dim.embedding": "128"}}
 ```
 
-PyIceberg 0.11.1 和当前 Rust Iceberg SDK 的 `NestedField` 均没有 `vector_dim` 字段，序列化时无法保留该扩展。Spark Iceberg schema 同样不生成该字段。套件在 `iceberg_catalog.create_table` 的 schema JSON 中提供字段级 `vector_dim=128`，producer metadata 的 `vector_dim.embedding=128` 保留为数据契约审计属性。
+各 producer 的 Iceberg schema 保持标准 `list<float>`。`register_table` 读取表属性，把
+`embedding` 映射为数据库 `vector(128)`，并在 Catalog schema 记录中保存字段维度；producer
+metadata 不需要字段级扩展。套件不直接更新 Catalog 内部表。
 
-套件不创建、加载或检查 `iceberg_delta` 扩展及其伴生表，也不依赖 Delta。目标 backend 已激活 Delta hook 时，Catalog 在 `create_table` 过程中使用同一份字段级向量 schema；hook 未激活时只创建基础表。两种环境均执行相同的 fixture 接入、数据扫描和向量查询流程。
+套件只创建和检查 `iceberg_catalog`、`iceberg_fdw`，不调用 Delta 供数或 Delta 接口。
 
-## 2. 三条供数路径
+## 2. 四条供数路径
 
-| 项目 | Spark | PyIceberg | Rust fixture |
-|---|---|---|---|
-| 主要用途 | 跨引擎兼容性、性能供数 | Python 独立 producer、链路冒烟 | 与 bridge 锁定 SDK 一致的 fixture |
-| 前置依赖 | JDK、Spark、Iceberg runtime | Python venv、锁定 wheelhouse | bridge 工作树、Rust 1.96、Cargo 离线缓存 |
-| Catalog | HadoopCatalog | 临时 SQLite Catalog | MemoryCatalog + LocalFs |
-| 内存策略 | Spark 分区写 | 每批默认 131072 行 | 每批默认 131072 行 |
-| 分区 | `bucket(id, N)` | `bucket(id, N)` | `bucket(id, N)` |
-| producer metadata 字段级 `vector_dim` | 不支持 | 不支持 | 不支持 |
-| 数据库入口 | `create_table` + metadata 切换 | `create_table` + metadata 切换 | `create_table` + metadata 切换 |
+| 项目 | Spark | Bridge ABI | PyIceberg | Rust SDK |
+|---|---|---|---|---|
+| 主要用途 | v3 跨引擎基线 | v3 DataInfra ABI 基线 | Python v2 兼容验证 | SDK v2 兼容验证 |
+| 前置依赖 | JDK、Spark、Iceberg runtime | bridge 工作树、Rust、Cargo 离线缓存 | Python venv、锁定 wheelhouse | bridge 工作树、Rust、Cargo 离线缓存 |
+| producer Catalog | HadoopCatalog | Bridge managed table | 临时 SQLite Catalog | MemoryCatalog + LocalFs |
+| 内存策略 | Spark 分区写 | 分批读取并暂存 32 个分区流 | 可配置输入批次 | 可配置输入批次 |
+| 分区 | `bucket(id, N)` | `bucket(id, N)` | `bucket(id, N)` | `bucket(id, N)` |
+| Iceberg 格式 | v3 | v3 | v2 | v2 |
+| 表属性 `vector_dim.embedding` | 支持 | 支持 | 支持 | 支持 |
+| 数据库入口 | 原生 `register_table` | 原生 `register_table` | 原生 `register_table` | 原生 `register_table` |
 
-PyIceberg 每次 `append`、Rust fixture 每个输入批次都会为涉及的分区生成数据文件。两条路径的分区表文件数通常多于 Spark。各 producer 的结果用于验证互操作；性能数值只有在 Parquet 文件数、大小、压缩、partition spec、snapshot 数、索引参数和硬件一致时才能直接比较。
+性能基线的文件切分规则为：`bucket(id, 32)` 表在一个 snapshot 中生成 32 个数据
+文件，即每个非空 bucket 一个文件。1 GiB 目标文件大小高于 SIFT/GIST 单 bucket 的
+未压缩向量载荷。Spark 使用一次 append、Iceberg hash distribution 和 32 个 shuffle
+partition；Bridge 先把输入分流为 32 个 Arrow IPC 流，再逐 bucket 调用分区写入 ABI。
+两条 v3 路径写完后均强制校验实际文件数为 32。PyIceberg 和 Rust SDK 每个输入批次会为
+涉及的 bucket 生成文件，只有单批覆盖全量数据时通常满足 32 文件目标。各 producer 的性能数值
+只有在 Parquet 文件数、大小、压缩、partition spec、snapshot 数、索引参数和硬件一致时
+才能直接比较。
 
 ## 3. 文件结构
 
@@ -81,10 +91,12 @@ sift1m-yellow-mvp/
 │   ├── clean.sh
 │   ├── clean-index-artifacts.py
 │   ├── supply-data.sh
-│   ├── seed-sift1m.sh           # Spark
+│   ├── seed-spark.sh            # SIFT/GIST 公共 Spark v3 producer
+│   ├── seed-sift1m.sh           # SIFT 兼容入口
 │   ├── seed-sift1m-pyiceberg.sh
 │   ├── seed-gist1m-pyiceberg.sh
 │   ├── seed-sift1m-rust.sh
+│   ├── seed-bridge.sh           # SIFT/GIST 公共 Bridge ABI v3 producer
 │   ├── register-table.sh
 │   ├── verify-table.sh
 │   ├── configure-index.sh
@@ -100,7 +112,8 @@ sift1m-yellow-mvp/
 ├── src/
 │   ├── seed_sift1m.py
 │   ├── seed_sift1m_pyiceberg.py
-│   └── seed_sift1m_rust.rs
+│   ├── seed_sift1m_rust.rs
+│   └── seed_fvecs_bridge.rs
 └── tests/
 ```
 
@@ -158,7 +171,7 @@ Rust 路径复用与黄区 bridge 构建相同的完整工作树、Cargo.lock �
 
 | 配置 | 用途 | clusters | 构建 worker | 数据文件目标 | 默认测试规模 |
 |---|---|---:|---:|---:|---:|
-| `mvp.env.example` | 部署、供数、索引和查询功能回归 | 256 | 1 | 分批供数，文件数可多于 32 | 前 100 条 queries |
+| `mvp.env.example` | 部署、供数、索引和查询功能回归 | 256 | 1 | Spark 32；分批 producer 可多于 32 | 前 100 条 queries |
 | `perf.env.example` | 可比较的 SIFT1M 性能与 Recall 测试 | 1024 | 8 | 32 buckets、约 32 个数据文件 | 全量中等距采样 100 queries；正式 Recall 10000 |
 
 首次使用通过配置初始化入口创建 `mvp.env`。脚本不会覆盖已有配置；当前 shell 已显式导出的同名参数会写入新配置。选择 PyIceberg 且包内已有 `.venv` 时自动配置其 Python 路径；仅有完整 wheelhouse 时自动调用锁定离线安装器；两者均缺失时给出 wheelhouse 准备和安装命令。
@@ -186,7 +199,11 @@ vi mvp.env
 bash bin/run-perf.sh
 ```
 
-PyIceberg 是黄区已验证的默认性能供数路径。perf 配置使用一个 1000000 行批次，使 PyIceberg 和 Rust fixture 通常分别生成 32 个分区数据文件；Spark 使用 32 个写入任务。perf 的 100-query 测试从官方 10000 条 query 中含首尾等距取序号 `0,101,202,...,9999`，并用同一组序号读取官方 ground truth。测试报告必须记录实际 Parquet 文件数和字节数，只有落盘布局一致的结果才能直接比较。
+SIFT 一键入口继续默认使用 PyIceberg；要求 Iceberg v3 时显式选择 `spark`。perf 配置使
+PyIceberg 和 Rust fixture 单批覆盖 1000000 行，通常生成 32 个分区数据文件；Spark
+按公共文件切分规则强制生成 32 个文件。perf 的 100-query 测试从官方 10000 条
+query 中含首尾等距取序号 `0,101,202,...,9999`，并用同一组序号读取官方 ground truth。
+测试报告必须记录实际 Parquet 文件数和字节数。
 
 ### 5.1 MVP 与 perf 一键测试
 
@@ -200,7 +217,7 @@ bash bin/run-clean-test.sh
 
 ```bash
 bash bin/run-clean-test.sh fresh pyiceberg
-# 或：fresh spark / fresh rust
+# 或：fresh spark / fresh bridge / fresh rust
 ```
 
 复用已接入的 Iceberg 数据，只清理并重建索引、重跑查询：
@@ -246,14 +263,13 @@ bash bin/clean.sh all
 |---|---|---|---|
 | `index` | Catalog 索引定义、失去引用的 Registry Puffin 和 segment artifact | 外表、Parquet、snapshot、当前空 Registry、查询结果 | Flat/PQ 切换 |
 | `results` | benchmark JSON、矩阵和运行日志 | Catalog 表、Iceberg 数据、`metadata_location.txt`、provider/table 定位文件 | 复用供数数据重测 |
-| `all` | 当前测试表的 Catalog 记录、两种 producer 表目录、bootstrap metadata、运行状态 | `downloads/` 中的 SIFT1M 原始文件、环境配置 | 从 0 重新供数 |
+| `all` | 当前测试表的 Catalog 记录、producer 表目录、运行状态 | `downloads/` 中的 SIFT1M 原始文件、环境配置 | 从 0 重新供数 |
 
 `index` 使用 `iceberg_catalog.drop_index` 更新 metadata head，确认 Catalog 索引记录归零，
 再校验当前 Registry 为空、文件大小/SHA-256/table UUID 和路径边界均正确，并删除残留
 segment。当前 Registry v2 的 generation-aware GC 尚未启用，套件不调用
 `iceberg_catalog.vacuum_index`。最终索引目录只保留当前 metadata 引用的空 Registry。
-`all` 只删除 `MVP_WAREHOUSE_DIR` 下与当前 namespace/table 精确匹配的 Spark/PyIceberg
-和 Rust 表目录，并删除当前表的 bootstrap 目录。
+`all` 只删除 `MVP_WAREHOUSE_DIR` 下与当前 namespace/table 精确匹配的 producer 表目录。
 
 同一 SIFT1M 数据集在 schema、分区、压缩和 producer 版本保持一致时可持续复用。索引参数或 `nprobe` 变化只需要执行 `reuse`。供数布局或 producer 版本变化时执行 `fresh`。
 
@@ -262,11 +278,11 @@ segment。当前 Registry v2 的 generation-aware GC 尚未启用，套件不调
 | 模块 | 命令 | 作用 |
 |---|---|---|
 | 配置初始化 | `bash bin/init-env.sh <mvp\|perf> [provider]` | 创建配置、应用当前 shell 显式参数，并按需立即预检 |
-| 环境验证 | `bash bin/preflight.sh <spark\|pyiceberg\|rust\|all>` | 校验架构、producer、数据库、bridge/Catalog 安装副本和 SIFT 文件 |
-| 部署 | `bash bin/deploy.sh` | 创建并验证 `iceberg_catalog`、`iceberg_fdw` 及索引清理接口 |
+| 环境验证 | `bash bin/preflight.sh <spark\|bridge\|pyiceberg\|rust\|all>` | 校验架构、producer、数据库、bridge/Catalog 安装副本和数据文件 |
+| 部署 | `bash bin/deploy.sh` | 创建并验证 `iceberg_catalog`、`iceberg_fdw`、原生注册及索引接口 |
 | 清理 | `bash bin/clean.sh <index\|results\|all>` | 按上表清理测试状态 |
-| 供数分派 | `bash bin/supply-data.sh <spark\|pyiceberg\|rust>` | 调用对应 producer |
-| Catalog 接入 | `bash bin/register-table.sh` | Catalog 建向量表并切换 fixture metadata |
+| 供数分派 | `bash bin/supply-data.sh <spark\|bridge\|pyiceberg\|rust>` | 调用当前数据集支持的 producer |
+| Catalog 接入 | `bash bin/register-table.sh` | 原生注册 producer metadata 并校验向量映射 |
 | 表验证 | `bash bin/verify-table.sh` | 校验 head、relid、向量类型及数据范围 |
 | 索引切换 | `bash bin/configure-index.sh <flat\|pq>` | 原子更新 mvp.env 中的索引名、类型和 implementation |
 | 建索引 | `bash bin/build-index.sh` | 按当前配置建索引并校验 Catalog 状态 |
@@ -284,11 +300,15 @@ segment。当前 Registry v2 的 generation-aware GC 尚未启用，套件不调
 | `MVP_QUERY_COUNT` / `MVP_GT_K` | 数据集配置指定 | 校验 query 总数和官方 GT 最大 K |
 | `MVP_WAREHOUSE_DIR` | 配置文件指定 | 裸绝对 warehouse 路径 |
 | `MVP_NAMESPACE` / `MVP_TABLE` | 配置文件指定 | 专用于本次测试的 Catalog 表 |
-| `MVP_VECTOR_TYPE` | `floatvector` | 查询 literal cast；建表实际类型由 Catalog 字段级 `vector_dim=128` 决定 |
-| `MVP_PARTITION_BUCKETS` | 32 | 三条 producer 共用的 `bucket(id, N)` 分区数；设为 0 创建非分区表 |
-| `MVP_DATA_FILES` | 8 / 32 | MVP / perf 的 Spark 写入任务数 |
+| `MVP_VECTOR_TYPE` | `floatvector` | 查询 literal cast；建表实际类型由 Catalog 读取表属性决定 |
+| `MVP_PARTITION_BUCKETS` | 32 | 各 producer 共用的 `bucket(id, N)` 分区数；Bridge v3 基线要求正整数 |
+| `MVP_DATA_FILES` | 8 / 32 | Spark shuffle partition 数下限；非分区表同时作为目标文件数 |
+| `MVP_TARGET_FILE_SIZE_BYTES` | 1073741824 | Spark 单个 Parquet 文件的滚动目标大小 |
+| `MVP_SPARK_MASTER` | `local[*]` | 传给 `spark-submit --master` 的本地执行资源配置 |
+| `MVP_SPARK_DRIVER_MEMORY` | `8g` | 传给 `spark-submit --driver-memory` 的 JVM 内存配置 |
 | `MVP_PYICEBERG_BATCH_ROWS` | 131072 / 1000000 | MVP / perf 的 PyIceberg 输入批行数 |
 | `MVP_RUST_BATCH_ROWS` | 131072 / 1000000 | MVP / perf 的 Rust fixture 输入批行数 |
+| `MVP_BRIDGE_BATCH_ROWS` | 16384 | Bridge 读取 fvecs 并分流到 Arrow IPC 的批行数 |
 | `MVP_INDEX_NAME` | `idx_sift_ivfpq` | 当前索引名称 |
 | `MVP_INDEX_TYPE` | `ivf_pq` | Catalog index type |
 | `MVP_INDEX_IMPLEMENTATION` | `ivf_pq` | index ABI implementation |
@@ -337,12 +357,14 @@ segment。当前 Registry v2 的 generation-aware GC 尚未启用，套件不调
 | `MVP_ID_BASE` | 设置表 ID 和官方 GT 的偏移，SIFT1M 使用 1 | 错误值直接破坏 ID Recall；通常不改变距离计算延迟 | 重新供数并重跑查询 |
 | `MVP_COMPRESSION` | 设置 Parquet 压缩编码 | 影响 Parquet 字节数、供数耗时、解码 CPU、扫描延迟和索引构建读取时间 | 重新供数并重建索引 |
 | `MVP_PARTITION_BUCKETS` | 设置 `bucket(id, N)` 分区数 | 影响目录和文件布局、task group 数、索引 artifact 数、DOP 扩展性、构建时间、查询延迟；并行 ANN 下也可能影响 Recall | 重新供数并重建索引 |
-| `MVP_DATA_FILES` | 设置 Spark 写入任务数 | 影响 Spark 路径的文件数量和大小，进而影响扫描并行度、调度开销和索引构建读取效率；实际文件数以 artifact 为准 | Spark 重新供数并重建索引 |
+| `MVP_DATA_FILES` | 设置 Spark shuffle partition 数下限 | bucket 表按 bucket 数校验文件布局；非分区表按该值校验文件数 | Spark 重新供数并重建索引 |
+| `MVP_TARGET_FILE_SIZE_BYTES` | 设置 Spark rolling writer 目标大小 | 单 bucket 超过目标时拆分为多个文件；当前 SIFT/GIST 基线固定为 1 GiB | Spark 重新供数并重建索引 |
 | `MVP_PYICEBERG_BATCH_ROWS` | 设置每次 PyIceberg append 的输入行数 | 批次越多，通常 snapshot 和每个 bucket 的数据文件越多；影响供数内存、metadata、文件打开开销、扫描和构建时间 | PyIceberg 重新供数并重建索引 |
 | `MVP_RUST_BATCH_ROWS` | 设置 Rust fixture 每个输入批次的行数 | 每批按 bucket 拆分文件；影响供数内存、文件数量、扫描和构建时间 | Rust 重新供数并重建索引 |
-| `MVP_CATALOG_BOOTSTRAP_DIR` | 指定 Catalog 空表的临时 metadata 位置 | 不参与最终数据扫描；介质故障或残留状态会影响接入流程，不作为查询性能参数 | 重新执行 Catalog 接入 |
 
-同一组性能结果必须记录 producer、compression、partition spec、Parquet 文件数和字节数。`MVP_DATA_FILES=32` 不保证所有 producer 都生成 32 个文件；PyIceberg 和 Rust 的文件数还取决于 batch rows，Spark 的文件数还取决于实际 shuffle 和 writer 行为。
+同一组性能结果必须记录 producer、format version、compression、partition spec、Parquet
+文件数和字节数。Spark 和 Bridge producer 对当前 SIFT/GIST 基线强制执行 32 文件门禁；
+PyIceberg 和 Rust 的文件数取决于 batch rows。
 
 #### 5.5.2 索引构建和 ANN 查询
 
@@ -383,9 +405,9 @@ segment。当前 Registry v2 的 generation-aware GC 尚未启用，套件不调
 
 | 参数 | 作用及结果边界 |
 |---|---|
-| `SPARK_HOME` / `ICEBERG_SPARK_RUNTIME_JAR` | 选择 Spark 和 Iceberg writer 版本；版本变化可能改变文件布局、metadata 和供数性能，结果按不同 producer 版本分组 |
+| `JAVA_HOME` / `SPARK_HOME` / `ICEBERG_SPARK_RUNTIME_JAR` | 选择 JDK、Spark 和 Iceberg writer 版本；runtime 1.11.0 要求 JDK 17 或更高版本，版本变化可能改变文件布局、metadata 和供数性能 |
 | `MVP_PYTHON_BIN` | 选择 PyIceberg producer Python；包版本变化可能改变 writer 行为。benchmark 和矩阵脚本使用系统 `python3`，Python 启动时间不进入 SQL statement time |
-| `MVP_BRIDGE_SOURCE` / `MVP_CARGO_BIN` | 选择 Rust fixture 的 SDK 工作树和工具链；SDK 变化可能改变 metadata 和 writer 行为 |
+| `MVP_BRIDGE_SOURCE` / `MVP_CARGO_BIN` | 选择 Bridge ABI/Rust SDK producer 的工作树和工具链；版本变化可能改变 metadata 和 writer 行为 |
 | `MVP_GSQL_BIN` / `MVP_DB` / `MVP_PORT` | 选择数据库客户端和目标数据库；数据库实例、配置和当前负载属于性能结果环境信息 |
 | `MVP_GAUSSHOME` | 选择预检和运行时安装目录；bridge、Catalog、FDW 和内核二进制变化会影响全部功能与性能结果 |
 | `MVP_VECTOR_TYPE` | 设置查询向量 literal cast；必须与外表向量类型和 `<->` 运算符匹配，否则可能改变计划或使查询失败 |
@@ -399,6 +421,7 @@ segment。当前 Registry v2 的 generation-aware GC 尚未启用，套件不调
 
 ```bash
 bash bin/preflight.sh spark
+bash bin/preflight.sh bridge
 bash bin/preflight.sh pyiceberg
 bash bin/preflight.sh rust
 bash bin/preflight.sh all
@@ -411,9 +434,14 @@ bash bin/preflight.sh all
 ```bash
 source mvp.env
 bash bin/seed-sift1m.sh
+# GIST：MVP_ENV_FILE=gist.env MVP_STATE_DIR=state/gist1m bash bin/seed-spark.sh
 ```
 
-脚本使用 `env -u LD_LIBRARY_PATH spark-submit`，按 516 字节定长记录解析 SIFT base，创建 Iceberg v2 表并写入字符串属性 `vector_dim.embedding=128`。完成后校验行数、属性和最新 metadata，再写入 `state/metadata_location.txt`。
+`bin/seed-spark.sh` 从当前配置读取 dataset、dimension、rows 和 base 文件，使用
+`env -u LD_LIBRARY_PATH spark-submit` 调用公共 Python producer，并传入
+`MVP_SPARK_MASTER`、`MVP_SPARK_DRIVER_MEMORY`。producer 创建 Iceberg
+v3 表，写入 `vector_dim.embedding=<dimension>`，并校验 metadata 格式版本、行数和文件
+布局。`bin/seed-sift1m.sh` 保留为 SIFT 兼容入口。
 
 Spark 表目录已存在时供数器拒绝运行。重复测试使用新目录和新表名。
 
@@ -445,9 +473,11 @@ PyIceberg 供数器执行以下门禁：
 7. 校验最终 metadata 的 schema、partition spec、snapshot 和属性；
 8. 输出 Parquet 文件数、总字节数及最新 metadata URI。
 
-供数器不修改已发布 metadata，也不操作数据库 Catalog。统一接入脚本负责 Catalog 建表和 metadata 切换。
+供数器不修改已发布 metadata，也不操作数据库 Catalog。统一接入脚本负责原生注册。
 
-## 8. Rust fixture 供数
+## 8. Rust 与 Bridge 供数
+
+### 8.1 Rust SDK v2
 
 ```bash
 source mvp.env
@@ -455,6 +485,23 @@ bash bin/seed-sift1m-rust.sh
 ```
 
 脚本复用 bridge 的 Cargo.lock，以 `--offline --locked --release` 编译套件内 Rust example。供数器流式验证 516 字节 fvecs 记录，按 Iceberg `bucket(id, N)` 变换拆分每个输入批次，为每个分区绑定 `PartitionKey`，再提交一个 Iceberg v2 snapshot。完成后校验 partition spec 和每个 FileScanTask 的 partition 值并输出最新 metadata URI。默认 `MVP_PARTITION_BUCKETS=32`；设为 `0` 时创建非分区表。Rust SDK schema 仍为 `long + list<float>`；`vector_dim.embedding=128` 是表级审计属性。
+
+### 8.2 Bridge ABI v3
+
+```bash
+source mvp.env
+bash bin/seed-bridge.sh
+# GIST：MVP_ENV_FILE=gist.env MVP_STATE_DIR=state/gist1m bash bin/seed-bridge.sh
+```
+
+公共 Bridge provider 读取 SIFT/GIST 配置，通过
+`iceberg_bridge_table_create` 创建 v3 表，并写入 `vector_dim.embedding=<dimension>`。
+输入按 `MVP_BRIDGE_BATCH_ROWS` 分批解析，通过 SDK 的 Iceberg bucket transform 分流到 32 个
+临时 Arrow IPC 流，随后逐 bucket 调用
+`iceberg_bridge_table_write_partitioned_data_files`，最后调用
+`iceberg_bridge_table_fast_append_commit`。完成后使用 `iceberg_bridge_table_load` 重载并校验
+format version、snapshot、分区和 32 文件布局。IPC 暂存控制 GIST 宽向量的常驻内存，
+临时目录随进程退出清理。
 
 ## 9. 统一 fixture 接入门禁
 
@@ -464,23 +511,24 @@ bash bin/seed-sift1m-rust.sh
 bash bin/register-table.sh
 ```
 
-脚本名为 `register-table.sh` 以保持离线包目录和既有调用方式稳定，实际流程为：
+脚本流程为：
 
-1. 校验 fixture snapshot、`id long`、`embedding list<float>`、`bucket(id, N)` partition spec 和表级审计属性；
-2. 在独立 bootstrap 位置调用 `create_table`，schema 字段显式携带 `vector_dim=128`；
-3. 保留 Catalog 创建的外表、`relid` 及可选 Delta 伴生表；
-4. 将 `tables_internal.metadata_location` 和 `current_snapshot_id` 切换到 fixture；
-5. 校验数据范围、基础列类型和 Catalog 表头。
+1. 校验 fixture 的 v2/v3 format、UUID、snapshot、标准 schema、partition spec 和表属性；
+2. 创建扩展及缺失的 namespace；
+3. 调用三参数 `iceberg_catalog.register_table` 注册最终 metadata URI；
+4. 校验数据范围、SQL 向量类型、Catalog UUID、metadata、snapshot、`relid` 和 schema 维度。
 
 共同通过条件：
 
 - fixture metadata 顶层审计属性是字符串 `vector_dim.embedding=128`；
-- Catalog 建表 schema 的 `embedding` 字段含整数 `vector_dim=128`；
+- Catalog schema 记录的 `embedding.field_vector_dim=128`；
 - 最终外表是 `id bigint, embedding vector(128)` 或 `floatvector(128)`；
 - `tables_internal.relid` 指向最终外表；
 - `count=1000000, min(id)=1, max(id)=1000000`。
 
-producer metadata 可以不含字段级 `vector_dim`；向量 SQL 类型来自 Catalog 主动建表 schema。`MVP_CATALOG_BOOTSTRAP_DIR` 可覆盖空表的临时位置，默认使用 `MVP_WAREHOUSE_DIR/.catalog-bootstrap`。
+producer metadata 可以不含字段级 `vector_dim`；向量 SQL 类型来自 Catalog #116 对表属性
+`vector_dim.embedding` 的解析。注册流程不创建 bootstrap 表，也不更新
+`iceberg_catalog.tables_internal`。
 
 ## 10. 构建索引
 
@@ -585,8 +633,8 @@ python3 bin/run-matrix.py --k 10,100 --dop 1,8 --rounds 1 --nq 1
 | 数据 | 四个文件大小和 SHA-256 正确 |
 | 表 | 1,000,000 行、128 维、一基 ID |
 | metadata | 最终 snapshot 的具体绝对 URI |
-| 维度 | 数据均为 128 维；记录字段级属性和表级审计属性 |
-| SQL 类型 | Catalog `create_table` 原生创建 `vector(128)` 或 `floatvector(128)` |
+| 维度 | 数据均为 128 维；metadata 含表级维度属性，Catalog schema 记录字段维度 |
+| SQL 类型 | Catalog `register_table` 原生创建 `vector(128)` 或 `floatvector(128)` |
 | 索引 | type/implementation 符合固定映射，`index_status=active` |
 | 串行计划 | Vector Search 和实际 bridge scan mode 正确 |
 | 并行计划 | DOP>1 出现对应 LOCAL GATHER |
@@ -612,7 +660,7 @@ bash -n bin/*.sh
 下载并校验数据、按需准备 wheelhouse 后执行：
 
 ```bash
-# 三种 producer
+# 全部 producer
 MVP_OFFLINE_PROVIDER=all bash bin/make-offline-bundle.sh
 
 # 仅 Spark
@@ -623,14 +671,17 @@ MVP_OFFLINE_PROVIDER=pyiceberg bash bin/make-offline-bundle.sh
 
 # 仅 Rust fixture
 MVP_OFFLINE_PROVIDER=rust bash bin/make-offline-bundle.sh
+
+# 仅 Bridge ABI v3
+MVP_OFFLINE_PROVIDER=bridge bash bin/make-offline-bundle.sh
 ```
 
 完整包包含 SIFT1M 数据；PyIceberg 模式还强制包含经过 SHA-256 校验的 wheelhouse。`state/`、`.venv/` 和 Python cache 不进入包。Spark/JDK/runtime 使用 `mvp.env` 中的黄区绝对路径。
 
-GIST1M 首版离线包只携带 GIST 数据和 PyIceberg 制品：
+GIST1M Spark 离线包携带 GIST 数据；Spark/JDK/runtime 继续使用黄区绝对路径：
 
 ```bash
-MVP_OFFLINE_DATASET=gist1m MVP_OFFLINE_PROVIDER=pyiceberg \
+MVP_OFFLINE_DATASET=gist1m MVP_OFFLINE_PROVIDER=spark \
   bash bin/make-offline-bundle.sh
 ```
 
@@ -638,7 +689,8 @@ MVP_OFFLINE_DATASET=gist1m MVP_OFFLINE_PROVIDER=pyiceberg \
 
 ### 基础表或 Delta 伴生表为 `text`
 
-确认安装的 Catalog 支持 `create_table` schema 字段级 `vector_dim`，并检查 `state/register-table.log`。接入脚本不会从 producer metadata 推导 SQL 类型，也不操作或检查 Delta。Catalog 主动建表避免基础表与 hook 生成对象分别取自不同 schema；后续数据扫描和向量查询负责验证实际执行链路。
+确认已安装 Catalog #116，三参数 `register_table` 可用，并检查 producer metadata 顶层
+`properties.vector_dim.embedding` 与 `state/register-table.log`。套件不操作或检查 Delta。
 
 ### DOP 不生效
 
@@ -648,9 +700,10 @@ MVP_OFFLINE_DATASET=gist1m MVP_OFFLINE_PROVIDER=pyiceberg \
 
 wheel 必须匹配目标架构、Python ABI 和 glibc。回到同构联网机器重新生成 wheelhouse，不要在黄区启用网络索引或现场编译 PyArrow。
 
-### Spark 或 PyIceberg 被数据库动态库污染
+### Producer 被数据库构建环境污染
 
-所有 producer 命令均清除 `LD_LIBRARY_PATH`。数据库环境脚本只用于数据库命令，不在 producer 前重新 source。
+producer 命令清除数据库 `LD_LIBRARY_PATH`；Bridge runner 同时清除 `CC/CXX`。数据库环境
+脚本只用于数据库命令。
 
 ### Rust fixture 找不到 example 或依赖
 
@@ -658,6 +711,7 @@ wheel 必须匹配目标架构、Python ABI 和 glibc。回到同构联网机器
 
 ## 15. 来源
 
+- [openGauss-Catalog PR #116：register_table 表级向量维度支持](https://github.com/DataInfraLab/openGauss-Catalog/pull/116)
 - [Iceberg 向量索引端到端测试指南](https://github.com/Doreami/infra-compile-scripts/blob/main/%E7%AB%AF%E5%88%B0%E7%AB%AF%E6%80%A7%E8%83%BD%E6%B5%8B%E8%AF%95/%E7%AB%AF%E5%88%B0%E7%AB%AF%E6%B5%8B%E8%AF%95%E6%8C%87%E5%8D%97.md)
 - [PyIceberg SqlCatalog API](https://py.iceberg.apache.org/reference/pyiceberg/catalog/sql/)
 - [PyIceberg Table append API](https://py.iceberg.apache.org/reference/pyiceberg/table/)

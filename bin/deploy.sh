@@ -26,15 +26,15 @@ SELECT p.proname, p.probin
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid=p.pronamespace
 WHERE n.nspname='iceberg_catalog'
-  AND p.proname IN ('create_table', 'create_index', 'drop_index', 'drop_table', 'vacuum_index')
+  AND p.proname IN ('create_table', 'register_table', 'create_index', 'drop_index', 'drop_table', 'vacuum_index')
 ORDER BY p.proname;
 SQL
 
 function_count="$("$gsql_bin" -X -d "$db" -p "$port" -t -A -c \
-  "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='iceberg_catalog' AND p.proname IN ('create_table','create_index','drop_index','drop_table','vacuum_index');" \
+  "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='iceberg_catalog' AND p.proname IN ('create_table','register_table','create_index','drop_index','drop_table','vacuum_index');" \
   | tr -d '[:space:]')"
-if [[ "$function_count" != "5" ]]; then
-  echo "ERROR: Catalog 关键函数数量为 ${function_count:-<empty>}，期望 5" >&2
+if [[ "$function_count" != "6" ]]; then
+  echo "ERROR: Catalog 关键函数数量为 ${function_count:-<empty>}，期望 6" >&2
   exit 1
 fi
 echo "Catalog 与 FDW 部署检查通过。"

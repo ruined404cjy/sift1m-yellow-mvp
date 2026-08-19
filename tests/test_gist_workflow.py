@@ -27,6 +27,7 @@ class GistWorkflowTest(unittest.TestCase):
             "MVP_QUERY_COUNT=1000",
             "MVP_GT_K=100",
             "MVP_PARTITION_BUCKETS=32",
+            "MVP_TARGET_FILE_SIZE_BYTES=1073741824",
             "MVP_PYICEBERG_BATCH_ROWS=1000000",
             "MVP_QUERY_SAMPLING=equidistant",
             "MVP_RECALL_NQ=1000",
@@ -76,11 +77,13 @@ class GistWorkflowTest(unittest.TestCase):
     def test_entrypoint_isolates_config_state_and_provider(self):
         self.assertIn('env_file="${MVP_ENV_FILE:-$root_dir/gist.env}"', RUNNER)
         self.assertIn('MVP_STATE_DIR:-$root_dir/state/gist1m', RUNNER)
-        self.assertIn('run-perf.sh" "$mode" pyiceberg', RUNNER)
+        self.assertIn('provider="${2:-spark}"', RUNNER)
+        self.assertIn('run-perf.sh" "$mode" "$provider"', RUNNER)
         self.assertIn('"MVP_VECTOR_DIM:${MVP_VECTOR_DIM:-}:960"', RUNNER)
         self.assertIn('"MVP_PARTITION_BUCKETS:${MVP_PARTITION_BUCKETS:-}:32"', RUNNER)
+        self.assertIn("gist1m:spark)", SUPPLY)
         self.assertIn("gist1m:pyiceberg)", SUPPLY)
-        self.assertNotIn("gist1m:spark)", SUPPLY)
+        self.assertIn("gist1m:bridge)", SUPPLY)
         self.assertNotIn("gist1m:rust)", SUPPLY)
 
     def test_verifier_checks_all_fixed_file_contracts(self):

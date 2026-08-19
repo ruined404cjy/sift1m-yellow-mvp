@@ -6,20 +6,21 @@ GIST1M 套件在同一代码库中复用 SIFT1M 已验证的 Catalog 接入、�
 Recall 和延迟统计链路。GIST 使用独立配置文件 `gist.env`、独立 Catalog 表、独立
 warehouse 和 `state/gist1m/` 状态目录。SIFT 的 `mvp.env` 和 `state/` 保持原有语义。
 
-首版 GIST 流程固定为：
+GIST 默认性能流程为：
 
 ```text
 官方 GIST1M fvecs/ivecs
-  → PyIceberg 写入 Iceberg v2 bucket(id, 32)
-  → Catalog 创建 floatvector(960) 表并接入 snapshot
+  → Spark 写入 Iceberg v3 bucket(id, 32)，每个 bucket 一个数据文件
+  → Catalog #116 原生 register_table 创建 vector(960) 外表
   → IVF-Flat（ivf_flat + ivf）
   → IVF-PQ（ivf_pq + ivf_pq）
   → 清理索引后 FullScan
   → 官方 GT Recall、QPS、p50/p95/p99
 ```
 
-Spark 和 Rust 供数路径不参与首版 GIST 基线。该边界将新增代码集中在定长 fvecs
-读取和 PyIceberg 公共链路，避免引入第二套 Catalog、索引和 benchmark 实现。
+GIST 同时提供 Bridge ABI v3 和 PyIceberg v2 入口；Rust SDK v2 仅支持 SIFT。Spark 与 SIFT 复用
+`src/seed_sift1m.py` 的定长 fvecs 解析、Iceberg 建表、写入和 metadata 门禁，GIST 的
+配置、状态目录、Catalog 表和测试结果保持独立。
 
 ### 1.1 复用入口与阅读顺序
 
@@ -28,7 +29,7 @@ GIST 只保留数据集契约、下载校验、供数入口和配置隔离，执
 顺序阅读：
 
 1. [`README.md` 的目标与边界](../README.md#1-目标与边界)：了解 producer snapshot、
-   Catalog 主动建表和 metadata head 切换的总体契约；
+   表级向量维度属性和 Catalog #116 原生注册契约；
 2. [`README.md` 的 MVP 与 perf 一键测试](../README.md#51-mvp-与-perf-一键测试)和
    [模块入口](../README.md#53-模块入口)：了解公共执行顺序和模块职责；
 3. [`config/gist-perf.env.example`](../config/gist-perf.env.example)和
@@ -36,13 +37,14 @@ GIST 只保留数据集契约、下载校验、供数入口和配置隔离，执
    `state/gist1m/` 状态边界；
 4. [`bin/run-perf.sh`](../bin/run-perf.sh)：了解 `fresh`、`reuse`、Flat、PQ 和
    FullScan 的实际编排；
-5. [`bin/supply-data.sh`](../bin/supply-data.sh)、
+5. [`bin/supply-data.sh`](../bin/supply-data.sh)、[`bin/seed-spark.sh`](../bin/seed-spark.sh)
+   和 [`src/seed_sift1m.py`](../src/seed_sift1m.py)：了解默认 Spark v3 分派、960 维参数、
+   文件布局及公共 writer；PyIceberg 兼容路径再阅读
    [`bin/seed-gist1m-pyiceberg.sh`](../bin/seed-gist1m-pyiceberg.sh)和
-   [`src/seed_sift1m_pyiceberg.py`](../src/seed_sift1m_pyiceberg.py)：了解 GIST
-   PyIceberg 分派、960 维参数和公共 writer；
+   [`src/seed_sift1m_pyiceberg.py`](../src/seed_sift1m_pyiceberg.py)；
 6. [`README.md` 的统一 fixture 接入门禁](../README.md#9-统一-fixture-接入门禁)、
    [`bin/register-table.sh`](../bin/register-table.sh)和
-   [`bin/verify-table.sh`](../bin/verify-table.sh)：了解建表、snapshot 接入和复用门禁；
+   [`bin/verify-table.sh`](../bin/verify-table.sh)：了解原生注册和复用门禁；
 7. [`bin/configure-index.sh`](../bin/configure-index.sh)、
    [`bin/build-index.sh`](../bin/build-index.sh)、
    [`bin/run-matrix.py`](../bin/run-matrix.py)和
@@ -52,12 +54,12 @@ GIST 只保留数据集契约、下载校验、供数入口和配置隔离，执
 
 ```text
 bin/run-gist-perf.sh
-  → bin/run-perf.sh fresh|reuse pyiceberg
+  → bin/run-perf.sh fresh|reuse spark
     → bin/preflight.sh → bin/deploy.sh
     → fresh: bin/clean.sh all
-             → bin/supply-data.sh pyiceberg
-             → bin/seed-gist1m-pyiceberg.sh
-             → src/seed_sift1m_pyiceberg.py
+             → bin/supply-data.sh spark
+             → bin/seed-spark.sh
+             → src/seed_sift1m.py
              → bin/register-table.sh
       reuse: bin/clean.sh results → bin/clean.sh index
     → bin/verify-table.sh
@@ -67,12 +69,11 @@ bin/run-gist-perf.sh
     → bin/clean.sh index → bin/run-matrix.py fullscan
 ```
 
-`bin/register-table.sh` 是 producer snapshot 接入步骤的脚本名。其数据库操作为调用
-`iceberg_catalog.create_table` 创建带字段级 `vector_dim=960` 的 Catalog 表，再更新
-`iceberg_catalog.tables_internal.metadata_location/current_snapshot_id` 指向 PyIceberg
-snapshot；该流程不调用 `iceberg_catalog.register_table` 接口。GIST 复用这份公共脚本，
-维度、namespace、table、warehouse 和状态目录均来自 `gist.env` 及入口导出的
-`MVP_ENV_FILE`、`MVP_STATE_DIR`。
+`bin/register-table.sh` 校验 producer metadata 的 `vector_dim.embedding=960` 后，调用
+三参数 `iceberg_catalog.register_table`。Catalog #116 将标准 `list<float>` 映射为
+`vector(960)`，并保存 UUID、metadata、snapshot、`relid` 和 schema 字段维度。GIST 复用
+这份公共脚本，维度、namespace、table、warehouse 和状态目录均来自 `gist.env` 及入口
+导出的 `MVP_ENV_FILE`、`MVP_STATE_DIR`。
 
 ## 2. 数据契约
 
@@ -111,11 +112,12 @@ python3 -m pip install --user -U huggingface_hub hf_xet
 数据文件，校验固定大小和所有记录头，并生成 `checksums/GIST1M_SHA256SUMS`。文件
 清单固定记录官方文件摘要，后续重复执行下载脚本时直接校验已有文件。
 
-GIST 首版复用套件现有 PyIceberg wheelhouse。wheel 必须匹配黄区 aarch64、Python ABI
-和 glibc。生成仅含 GIST 数据与 PyIceberg 制品的离线包：
+Spark v3 路径需要配置中锁定的 JDK、Spark 3.5 和 Iceberg Spark runtime。PyIceberg v2
+兼容路径继续复用现有 wheelhouse，wheel 必须匹配黄区 aarch64、Python ABI 和 glibc。
+生成 GIST Spark 离线包：
 
 ```bash
-MVP_OFFLINE_DATASET=gist1m MVP_OFFLINE_PROVIDER=pyiceberg \
+MVP_OFFLINE_DATASET=gist1m MVP_OFFLINE_PROVIDER=spark \
   bash bin/make-offline-bundle.sh
 ```
 
@@ -124,15 +126,18 @@ MVP_OFFLINE_DATASET=gist1m MVP_OFFLINE_PROVIDER=pyiceberg \
 ```bash
 cp config/gist-perf.env.example gist.env
 vi gist.env
-bash bin/install-pyiceberg-offline.sh
 bash bin/verify-gist1m.sh
 ```
 
 至少填写以下绝对路径：
 
-- `MVP_PYTHON_BIN`：套件隔离虚拟环境中的 Python；
+- `SPARK_HOME`：黄区 Spark 3.5 安装目录；
+- `ICEBERG_SPARK_RUNTIME_JAR`：与 Spark/Scala 匹配的 Iceberg runtime；
+- `JAVA_HOME`：JDK 17 或更高版本安装目录；
 - `MVP_GAUSSHOME`：目标 GaussDB 安装目录；
 - `MVP_WAREHOUSE_DIR`：NVMe/XFS 上新的空目录。
+
+Bridge v3 路径还需填写 `MVP_BRIDGE_SOURCE` 和 `MVP_CARGO_BIN`。
 
 `MVP_NAMESPACE`、`MVP_TABLE`、warehouse 和索引名均使用 GIST 专用值。`gist.env` 与
 `mvp.env` 分离；`run-gist-perf.sh` 通过 `MVP_ENV_FILE` 复用公共脚本，并将结果写入
@@ -144,7 +149,7 @@ bash bin/verify-gist1m.sh
 |---|---|---:|
 | 数据 | dimension / rows | 960 / 1,000,000 |
 | Iceberg | partition / compression | bucket(id, 32) / uncompressed |
-| PyIceberg | batch rows | 1,000,000 |
+| Spark | shuffle partitions / target file size | 32 / 1 GiB |
 | IVF | clusters / sample rate | 1,024 / 100,000 |
 | 构建 | workers | 8 |
 | IVF-PQ | M / nbits | 60 / 8 |
@@ -157,9 +162,13 @@ bash bin/verify-gist1m.sh
 `type=ivf_pq, implementation=ivf_pq`，解析为 `builtin.ivf_pq@1`。报告同时保存
 Registry segment 的 `algorithm_details`，核对实际 clusters、M 和 nbits。
 
-PyIceberg 单批供数用于稳定生成约 32 个分区数据文件，进程会持有约 3.84 GB 的原始
-Float32 buffer，并产生 Arrow/分区写入开销。黄区主机内存容量可覆盖该路径。数据库
-`max_process_memory` 约 12 GiB、`shared_buffers` 约 1 GiB、`work_mem` 64 MiB，索引构建
+Spark 对全量数据执行一次 append，并使用 Iceberg hash distribution。每个 bucket 的
+未压缩向量载荷约 120 MB，低于 1 GiB rolling target，因此文件切分规则要求生成 32 个
+Parquet 文件；producer 在完成后核对实际文件数，偏离即失败。PyIceberg 兼容路径只有
+单批覆盖全量数据时通常得到相同布局，进程会持有约 3.84 GB 的原始 Float32 buffer。
+Bridge v3 路径按 16384 行分批解析并分流到 32 个临时 Arrow IPC 流，再逐 bucket 调用
+Bridge 分区写入 ABI，常驻内存由批大小和单 bucket 流控制；完成后同样强制校验 32 个文件。
+数据库 `max_process_memory` 约 12 GiB、`shared_buffers` 约 1 GiB、`work_mem` 64 MiB，索引构建
 先固定 8 workers；提高 workers 前单独采集 gaussdb 峰值 RSS 和内存错误。无 Swap
 环境中出现 OOM 或内存门禁失败时，该轮结果标记失败。
 
@@ -173,22 +182,24 @@ Float32 buffer，并产生 Arrow/分区写入开销。黄区主机内存容量�
 从空 warehouse 完整运行：
 
 ```bash
-bash bin/run-gist-perf.sh fresh
+bash bin/run-gist-perf.sh fresh spark
 ```
 
 复用已接入的 GIST Iceberg 表，清理索引和结果后重跑：
 
 ```bash
-bash bin/run-gist-perf.sh reuse
+bash bin/run-gist-perf.sh reuse spark
 ```
 
 执行顺序固定为 IVF-Flat、IVF-PQ、FullScan。流程结束时不保留索引，配置保持 PQ。
+需要复核既有 PyIceberg v2 数据时，把第二个参数改为 `pyiceberg`。
+需要验证 DataInfra Bridge v3 写入链路时，把第二个参数改为 `bridge`。
 结果目录为：
 
 ```text
 state/gist1m/
 ├── preflight.log
-├── seed-pyiceberg.log
+├── seed-spark.log 或 seed-bridge.log
 ├── register-table.log
 ├── build-index-flat.log
 ├── build-index-pq.log
@@ -229,6 +240,7 @@ Flat 矩阵将 `pq` 改为 `flat`，清理当前索引后重新构建。FullScan
 
 ## 8. 来源
 
+- [openGauss-Catalog PR #116：register_table 表级向量维度支持](https://github.com/DataInfraLab/openGauss-Catalog/pull/116)
 - [TexMex GIST 数据集](ftp://ftp.irisa.fr/local/texmex/corpus/gist.tar.gz)
 - [GIST1M 镜像压缩包 Git LFS OID](https://huggingface.co/datasets/fzliu/gist1m/commit/a98d7415dba638216300552059013cc627293409)
 - [ANN Benchmarks 数据集说明](https://ann-benchmarks.com/)

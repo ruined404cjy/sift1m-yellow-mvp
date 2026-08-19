@@ -19,11 +19,11 @@ if [[ "${MVP_CONFIG_PROFILE:-}" != "mvp" ]]; then
   exit 1
 fi
 if [[ "$mode" != "fresh" && "$mode" != "reuse" ]]; then
-  echo "Usage: bash bin/run-clean-test.sh [fresh|reuse] [spark|pyiceberg|rust]" >&2
+  echo "Usage: bash bin/run-clean-test.sh [fresh|reuse] [spark|pyiceberg|rust|bridge]" >&2
   exit 2
 fi
-if [[ "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" ]]; then
-  echo "Usage: bash bin/run-clean-test.sh [fresh|reuse] [spark|pyiceberg|rust]" >&2
+if [[ "$provider" != "spark" && "$provider" != "pyiceberg" && "$provider" != "rust" && "$provider" != "bridge" ]]; then
+  echo "Usage: bash bin/run-clean-test.sh [fresh|reuse] [spark|pyiceberg|rust|bridge]" >&2
   exit 2
 fi
 
